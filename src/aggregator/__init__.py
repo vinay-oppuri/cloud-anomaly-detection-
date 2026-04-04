@@ -1,6 +1,5 @@
 """Ensemble logic for expert model outputs."""
 
-from src.aggregator.ensemble import AggregationResult, ExpertEnsemble
+from src.aggregator.ensemble import ExpertEnsemble, IncidentDecision
 
-__all__ = ["AggregationResult", "ExpertEnsemble"]
-
+__all__ = ["ExpertEnsemble", "IncidentDecision"]

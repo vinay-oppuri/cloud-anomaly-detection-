@@ -1,10 +1,33 @@
 [project]
 name = "cloud-anomaly-detection"
 version = "0.1.0"
-description = "Add your description here"
+description = "Production-grade modular anomaly detection for cloud workload network and system logs."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "google-genai>=1.0.0",
+    "numpy>=2.3.0",
     "torch>=2.4.0",
 ]
+
+[project.scripts]
+train-network = "src.training.train_network:main"
+train-system = "src.training.train_system:main"
+
+[build-system]
+requires = ["hatchling>=1.26.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.uv]
+package = true
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+    "ruff>=0.12.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

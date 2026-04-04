@@ -1,12 +1,11 @@
 """Collectors for cloud telemetry sources."""
 
-from src.collectors.cloudtrail_collector import CloudTrailCollector, CloudTrailEvent
+from src.collectors.system_collector import SystemLogCollector, SystemLogRecord
 from src.collectors.vpc_collector import VPCFlowCollector, VPCFlowRecord
 
 __all__ = [
-    "CloudTrailCollector",
-    "CloudTrailEvent",
+    "SystemLogCollector",
+    "SystemLogRecord",
     "VPCFlowCollector",
     "VPCFlowRecord",
 ]
-

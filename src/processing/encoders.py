@@ -8,7 +8,7 @@ from typing import Deque, Sequence
 
 import torch
 
-from src.collectors.cloudtrail_collector import CloudTrailEvent
+from src.collectors.system_collector import SystemLogRecord
 from src.collectors.vpc_collector import VPCFlowRecord
 
 
@@ -106,7 +106,7 @@ class NetworkFeatureEncoder:
 
 class SystemLogEncoder:
     """
-    Tokenizes syslog/cloudtrail text into integer ids for Bi-LSTM input.
+    Tokenizes system log text into integer ids for Bi-LSTM input.
 
     Output shape: [sequence_length]
     """
@@ -130,11 +130,11 @@ class SystemLogEncoder:
 
         return torch.tensor(token_ids, dtype=torch.long)
 
-    def encode_cloudtrail(self, event: CloudTrailEvent) -> torch.Tensor:
+    def encode_record(self, event: SystemLogRecord) -> torch.Tensor:
         composed = (
-            f"event={event.event_name} source={event.event_source} region={event.aws_region} "
-            f"user={event.user_identity} source_ip={event.source_ip} user_agent={event.user_agent} "
-            f"error_code={event.error_code or 'none'} error_message={event.error_message or 'none'}"
+            f"host={event.host} service={event.service} severity={event.severity} "
+            f"user={event.user or 'none'} source_ip={event.source_ip or 'none'} "
+            f"msg={event.message}"
         )
         return self.encode_text(composed)
 
@@ -145,4 +145,3 @@ class SystemLogEncoder:
         digest = hashlib.md5(token.encode("utf-8"), usedforsecurity=False).hexdigest()
         # Reserve 0 for padding
         return (int(digest[:8], 16) % (self.vocab_size - 1)) + 1
-

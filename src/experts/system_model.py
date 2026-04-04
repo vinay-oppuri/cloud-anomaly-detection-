@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 import torch
 from torch import nn
@@ -61,24 +61,47 @@ class SystemExpert(BaseExpert):
         device: str | torch.device | None = None,
     ) -> None:
         super().__init__(name="system_expert")
-        self.class_names: tuple[str, ...] = tuple(
-            class_names
-            or (
-                "Normal",
-                "Credential Abuse",
-                "Privilege Escalation",
-                "Malicious Script Execution",
-                "Persistence Attempt",
-            )
+        default_class_names = (
+            "Normal",
+            "Credential Abuse",
+            "Privilege Escalation",
+            "Malicious Script Execution",
+            "Persistence Attempt",
         )
+
+        checkpoint_config: dict[str, Any] = {}
+        checkpoint_class_names: tuple[str, ...] = ()
+        model_path_obj = Path(model_path) if model_path is not None else None
+        if model_path_obj is not None:
+            checkpoint_config, checkpoint_class_names = self._peek_checkpoint(model_path_obj)
+
+        resolved_class_names = self._resolve_class_names(
+            explicit_class_names=class_names,
+            checkpoint_class_names=checkpoint_class_names,
+            default_class_names=default_class_names,
+            checkpoint_num_classes=checkpoint_config.get("num_classes"),
+        )
+        resolved_num_classes = len(resolved_class_names)
+        self.class_names: tuple[str, ...] = resolved_class_names
+
+        resolved_vocab_size = int(checkpoint_config.get("vocab_size", vocab_size))
+        resolved_embedding_dim = int(checkpoint_config.get("embedding_dim", 64))
+        resolved_hidden_dim = int(checkpoint_config.get("hidden_dim", 128))
+        resolved_lstm_layers = int(checkpoint_config.get("lstm_layers", 1))
+        resolved_dropout = float(checkpoint_config.get("dropout", 0.2))
+
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.model = BiLSTMLogClassifier(
-            vocab_size=vocab_size,
-            num_classes=len(self.class_names),
+            vocab_size=resolved_vocab_size,
+            num_classes=resolved_num_classes,
+            embedding_dim=resolved_embedding_dim,
+            hidden_dim=resolved_hidden_dim,
+            lstm_layers=resolved_lstm_layers,
+            dropout=resolved_dropout,
         ).to(self.device)
 
-        if model_path is not None:
-            self._load_weights(Path(model_path))
+        if model_path_obj is not None:
+            self._load_weights(model_path_obj)
 
         self.model.eval()
 
@@ -135,3 +158,52 @@ class SystemExpert(BaseExpert):
 
         self.model.load_state_dict(state_dict, strict=False)
 
+    def _peek_checkpoint(self, model_path: Path) -> tuple[dict[str, Any], tuple[str, ...]]:
+        if not model_path.exists():
+            return {}, ()
+
+        checkpoint = torch.load(model_path, map_location="cpu")
+        if not isinstance(checkpoint, dict):
+            return {}, ()
+
+        config = checkpoint.get("config")
+        class_names_raw = checkpoint.get("class_names")
+        parsed_config = config if isinstance(config, dict) else {}
+        parsed_class_names = (
+            tuple(str(item) for item in class_names_raw)
+            if isinstance(class_names_raw, (list, tuple))
+            else ()
+        )
+        return parsed_config, parsed_class_names
+
+    def _resolve_class_names(
+        self,
+        *,
+        explicit_class_names: Sequence[str] | None,
+        checkpoint_class_names: tuple[str, ...],
+        default_class_names: tuple[str, ...],
+        checkpoint_num_classes: Any,
+    ) -> tuple[str, ...]:
+        if explicit_class_names is not None:
+            candidate = tuple(explicit_class_names)
+        elif checkpoint_class_names:
+            candidate = checkpoint_class_names
+        else:
+            candidate = default_class_names
+
+        inferred_num_classes = (
+            int(checkpoint_num_classes)
+            if isinstance(checkpoint_num_classes, int) and checkpoint_num_classes > 0
+            else len(candidate)
+        )
+        if len(candidate) == inferred_num_classes:
+            return candidate
+
+        if explicit_class_names is not None or checkpoint_class_names:
+            raise ValueError(
+                "Class name count does not match checkpoint class count. "
+                "Pass matching class names or use a compatible checkpoint."
+            )
+
+        generated = [f"class_{idx}" for idx in range(inferred_num_classes)]
+        return tuple(generated)

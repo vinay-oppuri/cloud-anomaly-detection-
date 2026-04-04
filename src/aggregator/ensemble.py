@@ -6,22 +6,30 @@ from typing import Any, Mapping, Sequence
 import torch
 
 from src.experts.base_expert import BaseExpert, ExpertPrediction
-from src.interpreter.advisor import AdvisorResponse, AnomalyAdvisor
 
 
 @dataclass(slots=True)
-class AggregationResult:
-    """Final decision from the ensemble and optional LLM advisory."""
+class IncidentDecision:
+    """Final incident decision produced by the expert council."""
 
-    triggered: bool
+    anomaly_detected: bool
     threshold: float
+    dominant_expert: str | None
+    dominant_anomaly_type: str | None
+    max_anomaly_score: float
+    severity_level: str
+    triggered_experts: list[str]
     predictions: list[ExpertPrediction]
-    advisor_response: AdvisorResponse | None
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "triggered": self.triggered,
+            "anomaly_detected": self.anomaly_detected,
             "threshold": self.threshold,
+            "dominant_expert": self.dominant_expert,
+            "dominant_anomaly_type": self.dominant_anomaly_type,
+            "max_anomaly_score": self.max_anomaly_score,
+            "severity_level": self.severity_level,
+            "triggered_experts": self.triggered_experts,
             "predictions": [
                 {
                     "expert_name": item.expert_name,
@@ -32,63 +40,64 @@ class AggregationResult:
                 }
                 for item in self.predictions
             ],
-            "advisor_response": (
-                self.advisor_response.to_dict() if self.advisor_response is not None else None
-            ),
         }
 
 
 class ExpertEnsemble:
     """
-    Aggregates expert scores and conditionally invokes the LLM interpreter.
+    Aggregates anomaly predictions from all active experts.
 
-    The interpreter is triggered when at least one expert anomaly score is above
-    the configured threshold.
+    Incident is flagged when at least one expert anomaly score is above threshold.
     """
 
     def __init__(
         self,
         experts: Sequence[BaseExpert],
         threshold: float,
-        advisor: AnomalyAdvisor | None = None,
     ) -> None:
         if not experts:
             raise ValueError("At least one expert must be provided.")
         self.experts: tuple[BaseExpert, ...] = tuple(experts)
         self.threshold = float(max(0.0, min(threshold, 1.0)))
-        self.advisor = advisor
 
-    async def evaluate(
+    def evaluate(
         self,
         expert_inputs: Mapping[str, torch.Tensor],
-        raw_log_snippet: str,
-    ) -> AggregationResult:
+    ) -> IncidentDecision:
+        missing = [expert.name for expert in self.experts if expert.name not in expert_inputs]
+        if missing:
+            missing_names = ", ".join(missing)
+            raise ValueError(f"Missing input tensors for expert(s): {missing_names}")
+
         predictions: list[ExpertPrediction] = []
 
         for expert in self.experts:
-            input_tensor = expert_inputs.get(expert.name)
-            if input_tensor is None:
-                continue
+            input_tensor = expert_inputs[expert.name]
             predictions.append(expert.predict(input_tensor))
 
         triggered_predictions = [
             item for item in predictions if item.anomaly_score >= self.threshold
         ]
 
-        advisor_response: AdvisorResponse | None = None
-        if triggered_predictions and self.advisor is not None:
-            highest = max(triggered_predictions, key=lambda item: item.anomaly_score)
-            advisor_response = await self.advisor.advise(
-                predicted_anomaly=highest.predicted_class,
-                confidence=highest.confidence,
-                raw_log_snippet=raw_log_snippet,
-                expert_scores={item.expert_name: item.anomaly_score for item in predictions},
-            )
+        dominant = max(predictions, key=lambda item: item.anomaly_score, default=None)
+        max_score = dominant.anomaly_score if dominant is not None else 0.0
 
-        return AggregationResult(
-            triggered=bool(triggered_predictions),
+        return IncidentDecision(
+            anomaly_detected=bool(triggered_predictions),
             threshold=self.threshold,
+            dominant_expert=dominant.expert_name if dominant is not None else None,
+            dominant_anomaly_type=dominant.predicted_class if dominant is not None else None,
+            max_anomaly_score=max_score,
+            severity_level=self._severity_from_score(max_score),
+            triggered_experts=[item.expert_name for item in triggered_predictions],
             predictions=predictions,
-            advisor_response=advisor_response,
         )
 
+    def _severity_from_score(self, score: float) -> str:
+        if score >= 0.9:
+            return "Critical"
+        if score >= 0.75:
+            return "High"
+        if score >= 0.5:
+            return "Med"
+        return "Low"

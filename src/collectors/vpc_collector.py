@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import AsyncIterable, AsyncIterator, Mapping, Sequence
+from typing import AsyncIterable, AsyncIterator, Sequence
 
 
 @dataclass(slots=True)
@@ -105,4 +105,3 @@ class VPCFlowCollector:
             return int(value)
         except ValueError:
             return default
-
