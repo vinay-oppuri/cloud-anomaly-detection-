@@ -43,6 +43,26 @@ class IncidentDecision:
         }
 
 
+@dataclass(slots=True)
+class WeightedFusionResult:
+    """Optional weighted-fusion score summary across experts."""
+
+    fused_score: float
+    network_score: float | None
+    system_score: float | None
+    network_weight: float
+    system_weight: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "fused_score": self.fused_score,
+            "network_score": self.network_score,
+            "system_score": self.system_score,
+            "network_weight": self.network_weight,
+            "system_weight": self.system_weight,
+        }
+
+
 class ExpertEnsemble:
     """
     Aggregates anomaly predictions from all active experts.
@@ -101,3 +121,56 @@ class ExpertEnsemble:
         if score >= 0.5:
             return "Med"
         return "Low"
+
+    @staticmethod
+    def weighted_fusion(
+        *,
+        predictions: Sequence[ExpertPrediction],
+        network_expert_name: str = "network_expert",
+        system_expert_name: str = "system_expert",
+        network_weight: float = 0.5,
+        system_weight: float = 0.5,
+    ) -> WeightedFusionResult:
+        """
+        Computes an optional weighted combined score for network + system experts.
+
+        This utility does not affect threshold decisions in `evaluate`; it is an
+        additional score that can be logged or used by downstream tooling.
+        """
+
+        network_score = next(
+            (item.anomaly_score for item in predictions if item.expert_name == network_expert_name),
+            None,
+        )
+        system_score = next(
+            (item.anomaly_score for item in predictions if item.expert_name == system_expert_name),
+            None,
+        )
+
+        nw = max(0.0, float(network_weight))
+        sw = max(0.0, float(system_weight))
+        total_weight = nw + sw
+        if total_weight <= 0.0:
+            nw = 0.5
+            sw = 0.5
+            total_weight = 1.0
+        nw /= total_weight
+        sw /= total_weight
+
+        if network_score is None and system_score is None:
+            fused = 0.0
+        elif network_score is None:
+            fused = float(system_score)
+        elif system_score is None:
+            fused = float(network_score)
+        else:
+            fused = (float(network_score) * nw) + (float(system_score) * sw)
+
+        fused = float(max(0.0, min(fused, 1.0)))
+        return WeightedFusionResult(
+            fused_score=fused,
+            network_score=None if network_score is None else float(network_score),
+            system_score=None if system_score is None else float(system_score),
+            network_weight=nw,
+            system_weight=sw,
+        )

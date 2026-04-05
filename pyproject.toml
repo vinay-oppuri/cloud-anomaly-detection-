@@ -5,13 +5,20 @@ description = "Production-grade modular anomaly detection for cloud workload net
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "google-genai>=1.13.0",
     "numpy>=2.3.0",
-    "torch>=2.4.0",
+    "torch==2.11.0+cu128",
+    "tqdm>=4.66.0",
 ]
 
 [project.scripts]
-train-network = "src.training.train_network:main"
-train-system = "src.training.train_system:main"
+prepare_hdfs = "src.experts.system_expert.parser:main"
+prepare_cicids = "src.experts.network_expert.preprocessor:main"
+train_hdfs = "src.experts.system_expert.train:main"
+train_cicids = "src.experts.network_expert.train:main"
+test_hdfs = "src.experts.system_expert.test:main"
+test_cicids = "src.experts.network_expert.test:main"
+analyze_logs = "src.main:main"
 
 [build-system]
 requires = ["hatchling>=1.26.0"]
@@ -19,6 +26,14 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [tool.uv]
 package = true

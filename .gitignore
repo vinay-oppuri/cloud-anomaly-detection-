@@ -1,13 +1,41 @@
-# Python-generated files
+# Python
 __pycache__/
-*.py[oc]
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage*
+htmlcov/
+
+# Build / packaging
 build/
 dist/
 wheels/
-*.egg-info
+*.egg-info/
 
 # Virtual environments
-.venv
+.venv/
+venv/
 
-# Environment variables
+# Environment files
 .env
+.env.*
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Training artifacts
+*.npz
+*.npy
+
+# Data artifacts
+data/processed/*
+!data/processed/.gitkeep
+data/raw/**/*.csv
+data/raw/**/*.zip
+data/raw/**/*.gz
+data/raw/**/*.parquet
+data/raw/**/*.jsonl

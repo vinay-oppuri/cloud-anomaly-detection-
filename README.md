@@ -1,76 +1,73 @@
-## Modular Cloud Anomaly Detection (Production Scope)
+## Cloud Anomaly Detection (API-Ready)
 
-This project is a production-focused anomaly detection system for cloud workloads using deep learning.
+This project keeps one end-to-end flow for cloud logs:
+- parse + clean raw logs
+- detect anomaly
+- predict anomaly type
+- generate reason and action using Gemini (`google-genai`)
 
-Current scope intentionally includes only two specialized experts:
-- `NetworkExpert` for VPC/flow-log anomaly detection (`CNN + LSTM`)
-- `SystemExpert` for host/system-log anomaly detection (`Bi-LSTM`)
+## Core Modules
 
-No CloudTrail or LLM interpreter modules are included in the runtime path.
-
-## Architecture
-
-Pipeline flow:
-1. Collect logs:
+1. Log parsing/cleaning:
    - `src/collectors/vpc_collector.py`
    - `src/collectors/system_collector.py`
-2. Preprocess:
    - `src/processing/encoders.py`
    - `src/processing/normalizers.py`
-3. Inference:
-   - `src/experts/network_model.py`
-   - `src/experts/system_model.py`
-4. Aggregate decisions:
+2. Expert models:
+   - `src/experts/network_expert/*` (CICIDS / CNN-LSTM)
+   - `src/experts/system_expert/*` (HDFS / Transformer)
+3. Fusion + advice:
    - `src/aggregator/ensemble.py`
-5. Orchestrate end-to-end:
+   - `src/interpreter/advisor.py`
    - `src/pipeline.py`
-   - `src/main.py`
 
-## Run
+## Setup
 
 ```bash
 uv sync
-uv run python -m src.main
 ```
 
-## Train
+For Gemini explanations, set one of:
+- `GEMINI_API_KEY`
+- `GOOGLE_API_KEY`
 
-Processed dataset format:
-- Network: `X` shape `[N, seq_len, feature_dim]`, `y` shape `[N]`
-- System: `X` shape `[N, seq_len]` token IDs, `y` shape `[N]`
-- Store as `.npz` (keys `X`, `y`) or `.pt` dict (`X`/`y` or `features`/`labels`)
-
-Example commands:
+## Data Preparation
 
 ```bash
-uv run train-network ^
-  --train-data data/processed/network_train.npz ^
-  --val-data data/processed/network_val.npz ^
-  --test-data data/processed/network_test.npz ^
-  --class-names-path data/processed/network_classes.txt ^
-  --output-dir models
+uv run prepare_hdfs
+uv run prepare_cicids
 ```
+
+## Training
 
 ```bash
-uv run train-system ^
-  --train-data data/processed/system_train.npz ^
-  --val-data data/processed/system_val.npz ^
-  --test-data data/processed/system_test.npz ^
-  --class-names-path data/processed/system_classes.txt ^
-  --output-dir models
+uv run train_hdfs
+uv run train_cicids
 ```
 
-Artifacts produced in `models/`:
-- `network_expert_best.pth`, `network_expert_last.pth`, `network_expert_metrics.json`
-- `system_expert_best.pth`, `system_expert_last.pth`, `system_expert_metrics.json`
-
-## Test
+## Testing
 
 ```bash
-uv run pytest -q
+uv run test_hdfs
+uv run test_cicids
 ```
 
-## Notes
+## Inference (Raw Logs -> Result)
 
-- Inference pipeline expects `models/network_expert_best.pth` and `models/system_expert_best.pth`.
-- If files are absent, the pipeline still runs with initialized model weights for smoke-testing only.
+Demo events:
+
+```bash
+uv run analyze_logs --demo
+```
+
+Single event:
+
+```bash
+uv run analyze_logs --event-name e1 --vpc-flow-line "2 111122223333 eni-1 10.0.0.1 10.0.0.2 50000 443 6 10 1200 1700000000 1700000060 ACCEPT OK" --system-log-line "host=i-1 service=sshd severity=warning msg='Failed password' user=admin ip=185.10.10.10"
+```
+
+Output includes:
+- `anomaly_detected`
+- `anomaly_type`
+- `reason`
+- `action`

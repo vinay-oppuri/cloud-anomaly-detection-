@@ -1,0 +1,539 @@
+{
+  "task": "system_expert_transformer_training",
+  "best_epoch": 3,
+  "best_macro_f1": 0.9961733277249178,
+  "best_model_path": "models\\system_expert_best.pth",
+  "last_model_path": "models\\system_expert_last.pth",
+  "metrics": {
+    "best_val": {
+      "loss": 0.0017508749233520015,
+      "accuracy": 0.9995652551952005,
+      "macro_f1": 0.9961733277249178,
+      "per_class": [
+        {
+          "class_index": 0,
+          "class_name": "Normal",
+          "precision": 0.9997671210791251,
+          "recall": 0.9997850309913654,
+          "f1": 0.9997760759550361,
+          "support": 55822
+        },
+        {
+          "class_index": 1,
+          "class_name": "Anomaly",
+          "precision": 0.9928656361474435,
+          "recall": 0.9922756981580511,
+          "f1": 0.9925705794947994,
+          "support": 1683
+        }
+      ],
+      "confusion_matrix": [
+        [
+          55810,
+          12
+        ],
+        [
+          13,
+          1670
+        ]
+      ],
+      "anomaly_roc_auc": 0.9999835441628367,
+      "anomaly_average_precision": 0.9994318767600593
+    },
+    "test": {
+      "loss": 0.001344589770201548,
+      "accuracy": 0.9996638109922212,
+      "macro_f1": 0.9970404260556827,
+      "per_class": [
+        {
+          "class_index": 0,
+          "class_name": "Normal",
+          "precision": 0.9997850515279254,
+          "recall": 0.999868631619175,
+          "f1": 0.9998268398268398,
+          "support": 83734
+        },
+        {
+          "class_index": 1,
+          "class_name": "Anomaly",
+          "precision": 0.9956349206349207,
+          "recall": 0.9928769291650178,
+          "f1": 0.9942540122845255,
+          "support": 2527
+        }
+      ],
+      "confusion_matrix": [
+        [
+          83723,
+          11
+        ],
+        [
+          18,
+          2509
+        ]
+      ],
+      "anomaly_roc_auc": 0.9999856235343932,
+      "anomaly_average_precision": 0.9994791461868715
+    },
+    "history": [
+      {
+        "epoch": 1,
+        "train_loss": 0.004958961573161658,
+        "val": {
+          "loss": 0.001739189919867725,
+          "accuracy": 0.9991131205982089,
+          "macro_f1": 0.9921483199970123,
+          "per_class": [
+            {
+              "class_index": 0,
+              "class_name": "Normal",
+              "precision": 0.9993553354941532,
+              "recall": 0.9997312887392068,
+              "f1": 0.9995432767653248,
+              "support": 55822
+            },
+            {
+              "class_index": 1,
+              "class_name": "Anomaly",
+              "precision": 0.9909747292418772,
+              "recall": 0.9786096256684492,
+              "f1": 0.9847533632286996,
+              "support": 1683
+            }
+          ],
+          "confusion_matrix": [
+            [
+              55807,
+              15
+            ],
+            [
+              36,
+              1647
+            ]
+          ],
+          "anomaly_roc_auc": 0.9999836293159398,
+          "anomaly_average_precision": 0.9994348815719171
+        },
+        "learning_rate": 0.0003
+      },
+      {
+        "epoch": 2,
+        "train_loss": 0.0018613990868011233,
+        "val": {
+          "loss": 0.0014860647617763035,
+          "accuracy": 0.9993739674810886,
+          "macro_f1": 0.9945414933517372,
+          "per_class": [
+            {
+              "class_index": 0,
+              "class_name": "Normal",
+              "precision": 0.9999641512815917,
+              "recall": 0.999390921142202,
+              "f1": 0.9996774540372003,
+              "support": 55822
+            },
+            {
+              "class_index": 1,
+              "class_name": "Anomaly",
+              "precision": 0.9801749271137026,
+              "recall": 0.9988116458704694,
+              "f1": 0.9894055326662742,
+              "support": 1683
+            }
+          ],
+          "confusion_matrix": [
+            [
+              55788,
+              34
+            ],
+            [
+              2,
+              1681
+            ]
+          ],
+          "anomaly_roc_auc": 0.9999886214166057,
+          "anomaly_average_precision": 0.9996076011716879
+        },
+        "learning_rate": 0.0003
+      },
+      {
+        "epoch": 3,
+        "train_loss": 0.001861926496480114,
+        "val": {
+          "loss": 0.0017508749233520015,
+          "accuracy": 0.9995652551952005,
+          "macro_f1": 0.9961733277249178,
+          "per_class": [
+            {
+              "class_index": 0,
+              "class_name": "Normal",
+              "precision": 0.9997671210791251,
+              "recall": 0.9997850309913654,
+              "f1": 0.9997760759550361,
+              "support": 55822
+            },
+            {
+              "class_index": 1,
+              "class_name": "Anomaly",
+              "precision": 0.9928656361474435,
+              "recall": 0.9922756981580511,
+              "f1": 0.9925705794947994,
+              "support": 1683
+            }
+          ],
+          "confusion_matrix": [
+            [
+              55810,
+              12
+            ],
+            [
+              13,
+              1670
+            ]
+          ],
+          "anomaly_roc_auc": 0.9999835441628367,
+          "anomaly_average_precision": 0.9994318767600593
+        },
+        "learning_rate": 0.0003
+      },
+      {
+        "epoch": 4,
+        "train_loss": 0.002050231556953426,
+        "val": {
+          "loss": 0.0016894011523549447,
+          "accuracy": 0.9993739674810886,
+          "macro_f1": 0.9945414933517372,
+          "per_class": [
+            {
+              "class_index": 0,
+              "class_name": "Normal",
+              "precision": 0.9999641512815917,
+              "recall": 0.999390921142202,
+              "f1": 0.9996774540372003,
+              "support": 55822
+            },
+            {
+              "class_index": 1,
+              "class_name": "Anomaly",
+              "precision": 0.9801749271137026,
+              "recall": 0.9988116458704694,
+              "f1": 0.9894055326662742,
+              "support": 1683
+            }
+          ],
+          "confusion_matrix": [
+            [
+              55788,
+              34
+            ],
+            [
+              2,
+              1681
+            ]
+          ],
+          "anomaly_roc_auc": 0.999977998567001,
+          "anomaly_average_precision": 0.9992444281344103
+        },
+        "learning_rate": 0.0003
+      },
+      {
+        "epoch": 5,
+        "train_loss": 0.0017163503950065318,
+        "val": {
+          "loss": 0.0014831495234231913,
+          "accuracy": 0.9993565776888966,
+          "macro_f1": 0.9943882669500266,
+          "per_class": [
+            {
+              "class_index": 0,
+              "class_name": "Normal",
+              "precision": 0.9999462278862182,
+              "recall": 0.999390921142202,
+              "f1": 0.9996684973972566,
+              "support": 55822
+            },
+            {
+              "class_index": 1,
+              "class_name": "Anomaly",
+              "precision": 0.9801633605600933,
+              "recall": 0.9982174688057041,
+              "f1": 0.9891080365027966,
+              "support": 1683
+            }
+          ],
+          "confusion_matrix": [
+            [
+              55788,
+              34
+            ],
+            [
+              3,
+              1680
+            ]
+          ],
+          "anomaly_roc_auc": 0.9999892281324649,
+          "anomaly_average_precision": 0.9996345069931144
+        },
+        "learning_rate": 0.0003
+      },
+      {
+        "epoch": 6,
+        "train_loss": 0.0018222613377184408,
+        "val": {
+          "loss": 0.0022165219870472846,
+          "accuracy": 0.9993913572732805,
+          "macro_f1": 0.9946946323090826,
+          "per_class": [
+            {
+              "class_index": 0,
+              "class_name": "Normal",
+              "precision": 0.9999820753195074,
+              "recall": 0.999390921142202,
+              "f1": 0.9996864108376414,
+              "support": 55822
+            },
+            {
+              "class_index": 1,
+              "class_name": "Anomaly",
+              "precision": 0.9801864801864801,
+              "recall": 0.9994058229352347,
+              "f1": 0.9897028537805237,
+              "support": 1683
+            }
+          ],
+          "confusion_matrix": [
+            [
+              55788,
+              34
+            ],
+            [
+              1,
+              1682
+            ]
+          ],
+          "anomaly_roc_auc": 0.9999784349766541,
+          "anomaly_average_precision": 0.9992382455935387
+        },
+        "learning_rate": 0.0003
+      },
+      {
+        "epoch": 7,
+        "train_loss": 0.0030263758398092287,
+        "val": {
+          "loss": 0.0027765786177652986,
+          "accuracy": 0.9993044083123207,
+          "macro_f1": 0.993928062305039,
+          "per_class": [
+            {
+              "class_index": 0,
+              "class_name": "Normal",
+              "precision": 0.9998924615550059,
+              "recall": 0.999390921142202,
+              "f1": 0.999641628440367,
+              "support": 55822
+            },
+            {
+              "class_index": 1,
+              "class_name": "Anomaly",
+              "precision": 0.9801285797779077,
+              "recall": 0.9964349376114082,
+              "f1": 0.9882144961697112,
+              "support": 1683
+            }
+          ],
+          "confusion_matrix": [
+            [
+              55788,
+              34
+            ],
+            [
+              6,
+              1677
+            ]
+          ],
+          "anomaly_roc_auc": 0.9999397328913207,
+          "anomaly_average_precision": 0.9979050212114264
+        },
+        "learning_rate": 0.0003
+      },
+      {
+        "epoch": 8,
+        "train_loss": 0.00250700549344425,
+        "val": {
+          "loss": 0.00537502368421091,
+          "accuracy": 0.9973393617946266,
+          "macro_f1": 0.9758419842514197,
+          "per_class": [
+            {
+              "class_index": 0,
+              "class_name": "Normal",
+              "precision": 0.9976756244524307,
+              "recall": 0.9995879760667837,
+              "f1": 0.9986308847348122,
+              "support": 55822
+            },
+            {
+              "class_index": 1,
+              "class_name": "Anomaly",
+              "precision": 0.9854060913705583,
+              "recall": 0.922756981580511,
+              "f1": 0.953053083768027,
+              "support": 1683
+            }
+          ],
+          "confusion_matrix": [
+            [
+              55799,
+              23
+            ],
+            [
+              130,
+              1553
+            ]
+          ],
+          "anomaly_roc_auc": 0.9999351665561699,
+          "anomaly_average_precision": 0.9977436968320917
+        },
+        "learning_rate": 0.00015
+      },
+      {
+        "epoch": 9,
+        "train_loss": 0.0020152425102992395,
+        "val": {
+          "loss": 0.0020776935775073013,
+          "accuracy": 0.9993565776888966,
+          "macro_f1": 0.9943882669500266,
+          "per_class": [
+            {
+              "class_index": 0,
+              "class_name": "Normal",
+              "precision": 0.9999462278862182,
+              "recall": 0.999390921142202,
+              "f1": 0.9996684973972566,
+              "support": 55822
+            },
+            {
+              "class_index": 1,
+              "class_name": "Anomaly",
+              "precision": 0.9801633605600933,
+              "recall": 0.9982174688057041,
+              "f1": 0.9891080365027966,
+              "support": 1683
+            }
+          ],
+          "confusion_matrix": [
+            [
+              55788,
+              34
+            ],
+            [
+              3,
+              1680
+            ]
+          ],
+          "anomaly_roc_auc": 0.9999792545752709,
+          "anomaly_average_precision": 0.9992866521931313
+        },
+        "learning_rate": 0.00015
+      },
+      {
+        "epoch": 10,
+        "train_loss": 0.0017739786652125795,
+        "val": {
+          "loss": 0.002033598843276257,
+          "accuracy": 0.9993565776888966,
+          "macro_f1": 0.9943882669500266,
+          "per_class": [
+            {
+              "class_index": 0,
+              "class_name": "Normal",
+              "precision": 0.9999462278862182,
+              "recall": 0.999390921142202,
+              "f1": 0.9996684973972566,
+              "support": 55822
+            },
+            {
+              "class_index": 1,
+              "class_name": "Anomaly",
+              "precision": 0.9801633605600933,
+              "recall": 0.9982174688057041,
+              "f1": 0.9891080365027966,
+              "support": 1683
+            }
+          ],
+          "confusion_matrix": [
+            [
+              55788,
+              34
+            ],
+            [
+              3,
+              1680
+            ]
+          ],
+          "anomaly_roc_auc": 0.9999710905215166,
+          "anomaly_average_precision": 0.9987895393816976
+        },
+        "learning_rate": 0.00015
+      },
+      {
+        "epoch": 11,
+        "train_loss": 0.0018734627488224708,
+        "val": {
+          "loss": 0.0021078819572448856,
+          "accuracy": 0.9993391878967046,
+          "macro_f1": 0.9942349530266297,
+          "per_class": [
+            {
+              "class_index": 0,
+              "class_name": "Normal",
+              "precision": 0.9999283051333524,
+              "recall": 0.999390921142202,
+              "f1": 0.999659540917806,
+              "support": 55822
+            },
+            {
+              "class_index": 1,
+              "class_name": "Anomaly",
+              "precision": 0.9801517805020432,
+              "recall": 0.9976232917409388,
+              "f1": 0.9888103651354535,
+              "support": 1683
+            }
+          ],
+          "confusion_matrix": [
+            [
+              55788,
+              34
+            ],
+            [
+              4,
+              1679
+            ]
+          ],
+          "anomaly_roc_auc": 0.9999777537518297,
+          "anomaly_average_precision": 0.9991844655235312
+        },
+        "learning_rate": 7.5e-05
+      }
+    ]
+  },
+  "config": {
+    "processed_data": "data\\processed\\hdfs_processed.pt",
+    "output_dir": "models",
+    "epochs": 35,
+    "batch_size": 256,
+    "learning_rate": 0.0003,
+    "weight_decay": 0.0001,
+    "patience": 8,
+    "seed": 42,
+    "device": "cuda",
+    "normal_class_index": 0,
+    "d_model": 192,
+    "nhead": 6,
+    "num_layers": 3,
+    "dim_feedforward": 512,
+    "dropout": 0.2,
+    "max_len": 512
+  }
+}
