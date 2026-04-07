@@ -345,10 +345,6 @@ class HDFSEventParser:
         torch.save(payload, processed_path)
 
         split_payload = payload["splits"]
-        for split_name in ("train", "val", "test"):
-            split = split_payload[split_name]
-            split_out = self.config.output_dir / f"hdfs_{split_name}.pt"
-            torch.save({"features": split["X"], "labels": split["y"]}, split_out)
 
         cache = {
             "config": {
@@ -368,9 +364,6 @@ class HDFSEventParser:
             },
             "artifacts": {
                 "processed_bundle": str(processed_path),
-                "train_file": str(self.config.output_dir / "hdfs_train.pt"),
-                "val_file": str(self.config.output_dir / "hdfs_val.pt"),
-                "test_file": str(self.config.output_dir / "hdfs_test.pt"),
             },
         }
         self.config.cache_path.parent.mkdir(parents=True, exist_ok=True)

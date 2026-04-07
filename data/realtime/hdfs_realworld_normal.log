@@ -1,0 +1,36 @@
+2026-04-07 10:05:01,114 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* allocate blk_202604070301 for /apps/analytics/part-0301
+2026-04-07 10:05:01,438 INFO org.apache.hadoop.hdfs.server.datanode.DataNode: Receiving block BP-114523:blk_202604070301 src=/10.20.14.11:50010 dest=/10.20.14.31:9866
+2026-04-07 10:05:01,801 INFO org.apache.hadoop.hdfs.server.datanode.DataXceiver: writeBlock blk_202604070301 from /10.20.14.11:50010
+2026-04-07 10:05:02,066 INFO org.apache.hadoop.hdfs.server.datanode.PacketResponder: PacketResponder 0 for block blk_202604070301 success
+2026-04-07 10:05:02,329 INFO org.apache.hadoop.hdfs.server.datanode.fsdataset.impl.FsDatasetImpl: Finalized block blk_202604070301
+2026-04-07 10:05:02,684 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* addStoredBlock blk_202604070301 to DatanodeDescriptor[10.20.14.31:9866]
+2026-04-07 10:05:02,991 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: completeFile /apps/analytics/part-0301
+2026-04-07 10:05:05,112 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* allocate blk_202604070302 for /apps/analytics/part-0302
+2026-04-07 10:05:05,421 INFO org.apache.hadoop.hdfs.server.datanode.DataNode: Receiving block BP-114523:blk_202604070302 src=/10.20.14.12:50010 dest=/10.20.14.32:9866
+2026-04-07 10:05:05,763 INFO org.apache.hadoop.hdfs.server.datanode.DataXceiver: writeBlock blk_202604070302 from /10.20.14.12:50010
+2026-04-07 10:05:06,028 INFO org.apache.hadoop.hdfs.server.datanode.PacketResponder: PacketResponder 0 for block blk_202604070302 success
+2026-04-07 10:05:06,341 INFO org.apache.hadoop.hdfs.server.datanode.fsdataset.impl.FsDatasetImpl: Finalized block blk_202604070302
+2026-04-07 10:05:06,697 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* addStoredBlock blk_202604070302 to DatanodeDescriptor[10.20.14.32:9866]
+2026-04-07 10:05:06,992 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: completeFile /apps/analytics/part-0302
+2026-04-07 10:05:09,108 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* allocate blk_202604070303 for /apps/analytics/part-0303
+2026-04-07 10:05:09,416 INFO org.apache.hadoop.hdfs.server.datanode.DataNode: Receiving block BP-114523:blk_202604070303 src=/10.20.14.13:50010 dest=/10.20.14.33:9866
+2026-04-07 10:05:09,749 INFO org.apache.hadoop.hdfs.server.datanode.DataXceiver: writeBlock blk_202604070303 from /10.20.14.13:50010
+2026-04-07 10:05:10,021 INFO org.apache.hadoop.hdfs.server.datanode.PacketResponder: PacketResponder 0 for block blk_202604070303 success
+2026-04-07 10:05:10,338 INFO org.apache.hadoop.hdfs.server.datanode.fsdataset.impl.FsDatasetImpl: Finalized block blk_202604070303
+2026-04-07 10:05:10,701 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* addStoredBlock blk_202604070303 to DatanodeDescriptor[10.20.14.33:9866]
+2026-04-07 10:05:11,002 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: completeFile /apps/analytics/part-0303
+2026-04-07 10:05:14,180 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* allocate blk_202604070304 for /apps/analytics/part-0304
+2026-04-07 10:05:14,497 INFO org.apache.hadoop.hdfs.server.datanode.DataNode: Receiving block BP-114523:blk_202604070304 src=/10.20.14.14:50010 dest=/10.20.14.34:9866
+2026-04-07 10:05:14,839 INFO org.apache.hadoop.hdfs.server.datanode.DataXceiver: writeBlock blk_202604070304 from /10.20.14.14:50010
+2026-04-07 10:05:15,098 INFO org.apache.hadoop.hdfs.server.datanode.PacketResponder: PacketResponder 0 for block blk_202604070304 success
+2026-04-07 10:05:15,421 INFO org.apache.hadoop.hdfs.server.datanode.fsdataset.impl.FsDatasetImpl: Finalized block blk_202604070304
+2026-04-07 10:05:15,781 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* addStoredBlock blk_202604070304 to DatanodeDescriptor[10.20.14.34:9866]
+2026-04-07 10:05:16,091 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: completeFile /apps/analytics/part-0304
+2026-04-07 10:05:20,022 INFO org.apache.hadoop.ha.ActiveStandbyElector: state change from STANDBY to ACTIVE for nn1
+2026-04-07 10:05:22,104 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* allocate blk_202604070305 for /apps/analytics/part-0305
+2026-04-07 10:05:22,451 INFO org.apache.hadoop.hdfs.server.datanode.DataNode: Receiving block BP-114523:blk_202604070305 src=/10.20.14.15:50010 dest=/10.20.14.35:9866
+2026-04-07 10:05:22,791 INFO org.apache.hadoop.hdfs.server.datanode.DataXceiver: writeBlock blk_202604070305 from /10.20.14.15:50010
+2026-04-07 10:05:23,063 INFO org.apache.hadoop.hdfs.server.datanode.PacketResponder: PacketResponder 0 for block blk_202604070305 success
+2026-04-07 10:05:23,394 INFO org.apache.hadoop.hdfs.server.datanode.fsdataset.impl.FsDatasetImpl: Finalized block blk_202604070305
+2026-04-07 10:05:23,752 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* addStoredBlock blk_202604070305 to DatanodeDescriptor[10.20.14.35:9866]
+2026-04-07 10:05:24,060 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: completeFile /apps/analytics/part-0305

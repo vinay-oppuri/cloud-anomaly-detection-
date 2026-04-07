@@ -1,14 +1,17 @@
 [project]
 name = "cloud-anomaly-detection"
 version = "0.1.0"
-description = "Production-grade modular anomaly detection for cloud workload network and system logs."
+description = "Production-grade system-log anomaly detection for HDFS workloads."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "fastapi>=0.116.0",
     "google-genai>=1.13.0",
     "numpy>=2.3.0",
+    "python-multipart>=0.0.20",
     "torch==2.11.0+cu128",
     "tqdm>=4.66.0",
+    "uvicorn>=0.35.0",
 ]
 
 [project.scripts]
@@ -17,8 +20,8 @@ prepare_cicids = "src.experts.network_expert.preprocessor:main"
 train_hdfs = "src.experts.system_expert.train:main"
 train_cicids = "src.experts.network_expert.train:main"
 test_hdfs = "src.experts.system_expert.test:main"
+serve_system_api = "src.api.system_api:main"
 test_cicids = "src.experts.network_expert.test:main"
-analyze_logs = "src.main:main"
 
 [build-system]
 requires = ["hatchling>=1.26.0"]

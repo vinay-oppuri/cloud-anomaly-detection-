@@ -1,5 +1,3 @@
-"""Modular cloud anomaly detection package."""
+"""System log anomaly detection package."""
 
-from src.pipeline import AnomalyDetectionPipeline, PipelineConfig
-
-__all__ = ["AnomalyDetectionPipeline", "PipelineConfig"]
+__all__: list[str] = []

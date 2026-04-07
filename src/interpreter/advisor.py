@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping, TypedDict
 
 from src.interpreter.prompts import SYSTEM_PROMPT, build_incident_prompt
@@ -27,6 +28,9 @@ class IncidentAdvice:
     source: str
 
 
+ENV_KEY_CANDIDATES: tuple[str, ...] = ("GEMINI_API_KEY", "GOOGLE_API_KEY")
+
+
 class IncidentAdvisor:
     """
     Generates reason/action for an incident using Gemini.
@@ -44,7 +48,7 @@ class IncidentAdvisor:
     ) -> None:
         self.use_gemini = use_gemini
         self.gemini_model = gemini_model
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        self.api_key = _resolve_api_key(explicit=api_key)
         self._client = self._build_client()
 
     def advise(self, incident: Mapping[str, Any]) -> IncidentAdvice:
@@ -137,3 +141,72 @@ def _safe_json_parse(text: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             return {}
     return {}
+
+
+def _resolve_api_key(*, explicit: str | None) -> str | None:
+    if explicit is not None and explicit.strip():
+        return explicit.strip()
+
+    for env_key in ENV_KEY_CANDIDATES:
+        value = os.getenv(env_key)
+        if value:
+            return value
+
+    return _load_api_key_from_dotenv()
+
+
+def _load_api_key_from_dotenv() -> str | None:
+    candidate_paths = (
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parents[2] / ".env",
+    )
+    seen: set[Path] = set()
+
+    for path in candidate_paths:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+
+        if not path.exists() or not path.is_file():
+            continue
+
+        parsed = _parse_dotenv(path)
+        for env_key in ENV_KEY_CANDIDATES:
+            value = parsed.get(env_key)
+            if not value:
+                continue
+            os.environ.setdefault(env_key, value)
+            return value
+    return None
+
+
+def _parse_dotenv(path: Path) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+
+        key_part, value_part = line.split("=", maxsplit=1)
+        key = key_part.strip()
+        if not key:
+            continue
+
+        value = value_part.strip()
+        if value and value[0] in {'"', "'"} and value[-1:] == value[0]:
+            value = value[1:-1]
+        elif " #" in value:
+            value = value.split(" #", maxsplit=1)[0].strip()
+
+        parsed[key] = value
+
+    return parsed
