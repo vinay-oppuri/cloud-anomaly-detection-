@@ -104,9 +104,12 @@ def run_evaluation(config: NetworkTestConfig) -> dict[str, Any]:
         input_dim=int(checkpoint_config.get("input_dim", split_X.shape[-1])),
         num_classes=num_classes,
         conv_channels=int(checkpoint_config.get("conv_channels", 96)),
+        conv_kernel_size=int(checkpoint_config.get("conv_kernel_size", 3)),
+        flow_embedding_dim=int(checkpoint_config.get("flow_embedding_dim", 128)),
         lstm_hidden_dim=int(checkpoint_config.get("lstm_hidden_dim", 128)),
         lstm_layers=int(checkpoint_config.get("lstm_layers", 2)),
         dropout=float(checkpoint_config.get("dropout", 0.3)),
+        bidirectional=bool(checkpoint_config.get("bidirectional", False)),
     ).to(device)
     model.load_state_dict(state_dict, strict=False)
     model.eval()

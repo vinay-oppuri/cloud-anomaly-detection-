@@ -40,10 +40,14 @@ class NetworkBundleTrainConfig:
     seed: int
     device: str
     normal_class_index: int
+    expected_feature_dim: int
     conv_channels: int
+    conv_kernel_size: int
+    flow_embedding_dim: int
     lstm_hidden_dim: int
     lstm_layers: int
     dropout: float
+    bidirectional: bool
     disable_class_weights: bool
 
 
@@ -61,10 +65,19 @@ def parse_args() -> NetworkBundleTrainConfig:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--normal-class-index", type=int, default=0)
+    parser.add_argument("--expected-feature-dim", type=int, default=80)
     parser.add_argument("--conv-channels", type=int, default=96)
+    parser.add_argument("--conv-kernel-size", type=int, default=3)
+    parser.add_argument("--flow-embedding-dim", type=int, default=128)
     parser.add_argument("--lstm-hidden-dim", type=int, default=128)
     parser.add_argument("--lstm-layers", type=int, default=2)
     parser.add_argument("--dropout", type=float, default=0.3)
+    parser.add_argument(
+        "--bidirectional",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Use a bidirectional LSTM over the flow sequence.",
+    )
     parser.add_argument(
         "--disable-class-weights",
         action="store_true",
@@ -82,10 +95,14 @@ def parse_args() -> NetworkBundleTrainConfig:
         seed=ns.seed,
         device=ns.device,
         normal_class_index=ns.normal_class_index,
+        expected_feature_dim=ns.expected_feature_dim,
         conv_channels=ns.conv_channels,
+        conv_kernel_size=ns.conv_kernel_size,
+        flow_embedding_dim=ns.flow_embedding_dim,
         lstm_hidden_dim=ns.lstm_hidden_dim,
         lstm_layers=ns.lstm_layers,
         dropout=ns.dropout,
+        bidirectional=ns.bidirectional,
         disable_class_weights=ns.disable_class_weights,
     )
 
@@ -123,15 +140,24 @@ def run_training(config: NetworkBundleTrainConfig) -> dict[str, Any]:
         raise ValueError(
             f"Expected network features [N, seq_len, feature_dim], got {tuple(train_X.shape)}"
         )
+    if config.expected_feature_dim > 0 and int(train_X.shape[-1]) != config.expected_feature_dim:
+        raise ValueError(
+            "Unexpected CICIDS feature dimension. "
+            f"Expected {config.expected_feature_dim}, got {int(train_X.shape[-1])}. "
+            "Re-run prepare_cicids with --target-feature-count matching this training config."
+        )
 
     input_dim = int(train_X.shape[-1])
     model = CNNLSTMClassifier(
         input_dim=input_dim,
         num_classes=len(class_names),
         conv_channels=config.conv_channels,
+        conv_kernel_size=config.conv_kernel_size,
+        flow_embedding_dim=config.flow_embedding_dim,
         lstm_hidden_dim=config.lstm_hidden_dim,
         lstm_layers=config.lstm_layers,
         dropout=config.dropout,
+        bidirectional=config.bidirectional,
     ).to(device)
 
     optimizer = AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
@@ -166,7 +192,8 @@ def run_training(config: NetworkBundleTrainConfig) -> dict[str, Any]:
         f"val={int(val_X.shape[0])} "
         f"test={int(test_X.shape[0])} "
         f"seq_len={int(train_X.shape[1])} "
-        f"features={int(train_X.shape[2])}"
+        f"features={int(train_X.shape[2])} "
+        f"classes={len(class_names)}"
     )
     class_counts = _class_counts(train_y, num_classes=len(class_names))
     print("Train class distribution:")
@@ -372,9 +399,12 @@ def _model_config_payload(
         "input_dim": input_dim,
         "num_classes": num_classes,
         "conv_channels": config.conv_channels,
+        "conv_kernel_size": config.conv_kernel_size,
+        "flow_embedding_dim": config.flow_embedding_dim,
         "lstm_hidden_dim": config.lstm_hidden_dim,
         "lstm_layers": config.lstm_layers,
         "dropout": config.dropout,
+        "bidirectional": config.bidirectional,
     }
 
 

@@ -15,6 +15,23 @@ This project is now organized around one reusable system-log flow:
 
 This repository is currently system-log focused, while network modules are also available for later expansion.
 
+## Network Flow Training (CICIDS)
+
+Network expert training now follows a CNN-LSTM pipeline for CICIDS:
+
+1. preprocess CICIDS CSVs into fixed windows (`seq_len x 80` flow features)
+2. run 1D CNN over each flow vector to learn feature interactions
+3. run LSTM across flow windows to learn temporal attack evolution
+4. classify with softmax over the CICIDS attack taxonomy (15 classes)
+
+Commands:
+
+```bash
+uv run prepare_cicids
+uv run train_cicids
+uv run test_cicids --split test --device cpu
+```
+
 ## Setup
 
 ```bash

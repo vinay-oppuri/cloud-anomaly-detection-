@@ -4,6 +4,8 @@ import argparse
 import csv
 import json
 import itertools
+import re
+from collections import deque
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -11,6 +13,8 @@ from typing import Iterable, Sequence
 import numpy as np
 import torch
 from tqdm.auto import tqdm
+
+from src.experts.network_expert.constants import CANONICAL_CICIDS_15_CLASSES
 
 DEFAULT_INPUT_DIR = Path("data/raw/cicids2018")
 DEFAULT_OUTPUT_DIR = Path("data/processed")
@@ -30,6 +34,10 @@ class CICIDSPreprocessConfig:
     seed: int = 42
     max_rows_per_file: int | None = None
     max_files: int | None = None
+    target_feature_count: int = 80
+    add_engineered_totals: bool = True
+    force_15_class_schema: bool = True
+    max_windows: int | None = 30000
 
 
 def parse_args() -> CICIDSPreprocessConfig:
@@ -47,7 +55,27 @@ def parse_args() -> CICIDSPreprocessConfig:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-rows-per-file", type=int, default=None)
     parser.add_argument("--max-files", type=int, default=None)
+    parser.add_argument("--target-feature-count", type=int, default=80)
+    parser.add_argument(
+        "--add-engineered-totals",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Add flow-level totals to reach a stable 80-feature tensor.",
+    )
+    parser.add_argument(
+        "--force-15-class-schema",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use the canonical CICIDS 15-class taxonomy (Benign + 14 attacks).",
+    )
+    parser.add_argument(
+        "--max-windows",
+        type=int,
+        default=30000,
+        help="Maximum total sequence windows kept in memory (set 0 to disable cap).",
+    )
     ns = parser.parse_args()
+    max_windows = ns.max_windows if ns.max_windows > 0 else None
     return CICIDSPreprocessConfig(
         input_dir=ns.input_dir,
         output_dir=ns.output_dir,
@@ -60,6 +88,10 @@ def parse_args() -> CICIDSPreprocessConfig:
         seed=ns.seed,
         max_rows_per_file=ns.max_rows_per_file,
         max_files=ns.max_files,
+        target_feature_count=ns.target_feature_count,
+        add_engineered_totals=ns.add_engineered_totals,
+        force_15_class_schema=ns.force_15_class_schema,
+        max_windows=max_windows,
     )
 
 
@@ -82,6 +114,8 @@ class CICIDSPreprocessor:
             raise ValueError("sequence_length must be positive.")
         if self.config.stride <= 0:
             raise ValueError("stride must be positive.")
+        if self.config.target_feature_count <= 0:
+            raise ValueError("target_feature_count must be positive.")
         self._validate_ratios()
 
     def run(self) -> dict[str, object]:
@@ -94,9 +128,14 @@ class CICIDSPreprocessor:
             raise FileNotFoundError(f"No CSV files found in {self.config.input_dir}")
 
         print(f"Preparing CICIDS from {len(csv_files)} file(s) in {self.config.input_dir}")
-        feature_names: list[str] | None = None
+        if self.config.max_windows is not None:
+            print(f"Window reservoir cap enabled: keeping at most {self.config.max_windows} windows.")
+        source_feature_names: list[str] | None = None
+        model_feature_names: list[str] | None = None
         sequences: list[np.ndarray] = []
         window_labels_raw: list[str] = []
+        rng = np.random.default_rng(self.config.seed)
+        total_windows_seen = 0
 
         files_bar = tqdm(
             csv_files,
@@ -119,13 +158,15 @@ class CICIDSPreprocessor:
                         f"Columns: {', '.join(reader.fieldnames)}"
                     )
 
-                if feature_names is None:
-                    feature_names = self._select_feature_columns(reader.fieldnames, label_column)
-                    if not feature_names:
+                if source_feature_names is None:
+                    source_feature_names = self._select_feature_columns(reader.fieldnames, label_column)
+                    if not source_feature_names:
                         raise ValueError(f"No usable feature columns found in {csv_path}")
+                    model_feature_names = self._resolve_output_feature_names(source_feature_names)
+                    if not model_feature_names:
+                        raise ValueError(f"No model feature names resolved for {csv_path}")
 
-                file_features: list[list[float]] = []
-                file_labels: list[str] = []
+                rolling_features: deque[np.ndarray] = deque(maxlen=self.config.sequence_length)
                 row_total = self._estimate_rows(csv_path)
                 if self.config.max_rows_per_file is not None:
                     row_total = min(row_total, self.config.max_rows_per_file)
@@ -145,29 +186,90 @@ class CICIDSPreprocessor:
                     disable=False,
                     mininterval=0.2,
                 )
+                valid_rows = 0
+                windows_from_file = 0
                 for row in rows_bar:
-                    label_text = _normalize_label(row.get(label_column, ""))
+                    label_text = _canonicalize_label(
+                        row.get(label_column, ""),
+                        force_15_class_schema=self.config.force_15_class_schema,
+                    )
                     if not label_text:
                         continue
 
-                    feature_vector = [self._to_float(row.get(col, "0")) for col in feature_names]
-                    if not np.isfinite(feature_vector).all():
+                    if source_feature_names is None:
+                        raise RuntimeError("Feature schema was not initialized.")
+
+                    feature_vector = [
+                        self._to_float(row.get(col, "0"))
+                        for col in source_feature_names
+                    ]
+                    if self.config.add_engineered_totals:
+                        feature_vector.extend(self._engineered_totals(row))
+                    feature_vector = _fit_feature_vector(
+                        feature_vector,
+                        target_count=self.config.target_feature_count,
+                    )
+                    feature_array = np.asarray(feature_vector, dtype=np.float32)
+                    if not np.isfinite(feature_array).all():
                         continue
-                    file_features.append(feature_vector)
-                    file_labels.append(label_text)
+                    valid_rows += 1
+                    rolling_features.append(feature_array)
+
+                    if len(rolling_features) < self.config.sequence_length:
+                        continue
+                    if (valid_rows - self.config.sequence_length) % self.config.stride != 0:
+                        continue
+
+                    window = np.stack(rolling_features, axis=0)
+                    total_windows_seen += 1
+                    windows_from_file += 1
+                    self._append_window_with_reservoir(
+                        sequences=sequences,
+                        labels=window_labels_raw,
+                        window=window,
+                        label=label_text,
+                        seen_windows=total_windows_seen,
+                        rng=rng,
+                    )
                 rows_bar.close()
 
-                seqs, seq_labels = self._build_windows(file_features=file_features, labels=file_labels)
-                sequences.extend(seqs)
-                window_labels_raw.extend(seq_labels)
+                if valid_rows > 0 and windows_from_file == 0:
+                    stacked = np.stack(rolling_features, axis=0)
+                    pad_count = self.config.sequence_length - stacked.shape[0]
+                    padded = np.concatenate(
+                        [
+                            np.zeros((pad_count, stacked.shape[1]), dtype=np.float32),
+                            stacked,
+                        ],
+                        axis=0,
+                    )
+                    total_windows_seen += 1
+                    self._append_window_with_reservoir(
+                        sequences=sequences,
+                        labels=window_labels_raw,
+                        window=padded,
+                        label=label_text,
+                        seen_windows=total_windows_seen,
+                        rng=rng,
+                    )
         files_bar.close()
+
+        if self.config.max_windows is not None and total_windows_seen > self.config.max_windows:
+            dropped = total_windows_seen - len(sequences)
+            print(
+                "Window sampling summary | "
+                f"seen={total_windows_seen} kept={len(sequences)} dropped={dropped}"
+            )
 
         if not sequences:
             raise ValueError("No sequence windows were produced from CICIDS CSVs.")
-        if feature_names is None:
+        if model_feature_names is None:
             raise ValueError("Feature names could not be resolved.")
 
-        class_names = _ordered_class_names(window_labels_raw)
+        class_names = _ordered_class_names(
+            window_labels_raw,
+            force_15_class_schema=self.config.force_15_class_schema,
+        )
         class_to_index = {name: idx for idx, name in enumerate(class_names)}
         labels = np.asarray([class_to_index[item] for item in window_labels_raw], dtype=np.int64)
         features = np.stack(sequences, axis=0).astype(np.float32, copy=False)
@@ -186,7 +288,7 @@ class CICIDSPreprocessor:
             labels=labels,
             split_indices=split_indices,
             class_names=class_names,
-            feature_names=feature_names,
+            feature_names=model_feature_names,
             normalization=stats,
         )
         self._save_payload(payload)
@@ -218,41 +320,71 @@ class CICIDSPreprocessor:
             columns.append(name)
         return columns
 
-    def _build_windows(
+    def _resolve_output_feature_names(self, source_feature_names: Sequence[str]) -> list[str]:
+        names = list(source_feature_names)
+        if self.config.add_engineered_totals:
+            names.extend(["Flow Pkts Total", "Flow Bytes Total"])
+        return _fit_feature_names(names, target_count=self.config.target_feature_count)
+
+    def _engineered_totals(self, row: dict[str, object]) -> list[float]:
+        fwd_pkts = self._coalesce_float(
+            row,
+            candidates=(
+                "Tot Fwd Pkts",
+                "Total Fwd Packets",
+                "Total Forward Packets",
+            ),
+        )
+        bwd_pkts = self._coalesce_float(
+            row,
+            candidates=(
+                "Tot Bwd Pkts",
+                "Total Bwd Packets",
+                "Total Backward Packets",
+            ),
+        )
+        fwd_bytes = self._coalesce_float(
+            row,
+            candidates=(
+                "TotLen Fwd Pkts",
+                "Total Length of Fwd Packets",
+            ),
+        )
+        bwd_bytes = self._coalesce_float(
+            row,
+            candidates=(
+                "TotLen Bwd Pkts",
+                "Total Length of Bwd Packets",
+            ),
+        )
+        return [fwd_pkts + bwd_pkts, fwd_bytes + bwd_bytes]
+
+    def _coalesce_float(self, row: dict[str, object], *, candidates: Sequence[str]) -> float:
+        for name in candidates:
+            if name in row:
+                return self._to_float(row.get(name, "0"))
+        return 0.0
+
+    def _append_window_with_reservoir(
         self,
         *,
-        file_features: Sequence[Sequence[float]],
-        labels: Sequence[str],
-    ) -> tuple[list[np.ndarray], list[str]]:
-        if not file_features:
-            return [], []
-
-        features_np = np.asarray(file_features, dtype=np.float32)
-        if features_np.ndim != 2:
-            return [], []
-
-        sequences: list[np.ndarray] = []
-        sequence_labels: list[str] = []
-        total = features_np.shape[0]
-        seq_len = self.config.sequence_length
-
-        if total < seq_len:
-            pad_count = seq_len - total
-            padded = np.concatenate(
-                [np.zeros((pad_count, features_np.shape[1]), dtype=np.float32), features_np],
-                axis=0,
-            )
-            sequences.append(padded)
-            sequence_labels.append(labels[-1])
-            return sequences, sequence_labels
-
-        for end_idx in range(seq_len - 1, total, self.config.stride):
-            start_idx = end_idx - seq_len + 1
-            window = features_np[start_idx : end_idx + 1]
+        sequences: list[np.ndarray],
+        labels: list[str],
+        window: np.ndarray,
+        label: str,
+        seen_windows: int,
+        rng: np.random.Generator,
+    ) -> None:
+        cap = self.config.max_windows
+        if cap is None or len(sequences) < cap:
             sequences.append(window)
-            sequence_labels.append(labels[end_idx])
+            labels.append(label)
+            return
 
-        return sequences, sequence_labels
+        replace_index = int(rng.integers(0, seen_windows))
+        if replace_index < cap:
+            sequences[replace_index] = window
+            labels[replace_index] = label
 
     def _normalize_by_train(
         self,
@@ -395,6 +527,60 @@ def _normalize_label(raw: object) -> str:
     return str(raw).strip().strip('"').strip("'")
 
 
+def _canonicalize_label(raw: object, *, force_15_class_schema: bool = True) -> str:
+    label = _normalize_label(raw)
+    if not label:
+        return ""
+
+    compact = re.sub(r"[^a-z0-9]+", "", label.lower())
+    if compact in {"label", "labels", "class", "attack"}:
+        # Skip header-like/noise rows that leak into data.
+        return ""
+
+    if compact in {"benign", "normal"} or "benign" in compact:
+        return "Benign"
+
+    if "ddos" in compact:
+        if "hoic" in compact:
+            return "DDoS-HOIC"
+        if "loic" in compact and "udp" in compact:
+            return "DDoS-LOIC-UDP"
+        if "loic" in compact and "http" in compact:
+            return "DDoS-LOIC-HTTP"
+
+    if compact.startswith("dos") or any(token in compact for token in ("hulk", "goldeneye", "slowloris", "slowhttp")):
+        if "hulk" in compact:
+            return "DoS-Hulk"
+        if "goldeneye" in compact:
+            return "DoS-GoldenEye"
+        if "slowloris" in compact:
+            return "DoS-Slowloris"
+        if "slowhttp" in compact:
+            return "DoS-SlowHTTPTest"
+
+    if "ftp" in compact and ("brute" in compact or "patator" in compact):
+        return "Brute Force-FTP"
+    if "ssh" in compact and ("brute" in compact or "patator" in compact):
+        return "Brute Force-SSH"
+
+    if "xss" in compact:
+        return "Web Attack-XSS"
+    if "sql" in compact and "inject" in compact:
+        return "Web Attack-SQL Injection"
+    if "web" in compact and "brute" in compact:
+        return "Web Attack-Brute Force"
+
+    if "infiltration" in compact or "infilteration" in compact:
+        return "Infiltration"
+    if "bot" in compact:
+        return "Botnet"
+
+    if force_15_class_schema:
+        # In strict 15-class mode, discard unknown labels instead of creating extra classes.
+        return ""
+    return label
+
+
 def _resolve_column(fieldnames: Iterable[str], candidates: Sequence[str]) -> str | None:
     normalized = {name.strip().lower(): name for name in fieldnames}
     for candidate in candidates:
@@ -404,11 +590,31 @@ def _resolve_column(fieldnames: Iterable[str], candidates: Sequence[str]) -> str
     return None
 
 
-def _ordered_class_names(labels: Sequence[str]) -> list[str]:
+def _ordered_class_names(labels: Sequence[str], *, force_15_class_schema: bool) -> list[str]:
     unique = sorted(set(labels))
+    if force_15_class_schema:
+        base = list(CANONICAL_CICIDS_15_CLASSES)
+        extras = [label for label in unique if label not in CANONICAL_CICIDS_15_CLASSES]
+        return base + extras
+
     benign = [label for label in unique if label.strip().lower() in {"benign", "normal"}]
     others = [label for label in unique if label not in benign]
     return benign + others
+
+
+def _fit_feature_vector(values: Sequence[float], *, target_count: int) -> list[float]:
+    current = list(values)
+    if len(current) >= target_count:
+        return current[:target_count]
+    return current + ([0.0] * (target_count - len(current)))
+
+
+def _fit_feature_names(names: Sequence[str], *, target_count: int) -> list[str]:
+    current = list(names)
+    if len(current) >= target_count:
+        return current[:target_count]
+    padding = [f"Pad Feature {idx + 1}" for idx in range(target_count - len(current))]
+    return current + padding
 
 
 def _stratified_split_indices(

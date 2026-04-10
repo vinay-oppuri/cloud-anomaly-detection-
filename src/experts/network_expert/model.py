@@ -1,79 +1,109 @@
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any, Sequence
-import warnings
 
 import torch
 from torch import nn
 
 from src.experts.base_expert import BaseExpert, ExpertPrediction
+from src.experts.network_expert.constants import CANONICAL_CICIDS_15_CLASSES
 
 
 class CNNLSTMClassifier(nn.Module):
-    """CNN-LSTM backbone for network-flow sequence classification."""
+    """Per-flow feature CNN + temporal LSTM classifier for CICIDS windows."""
 
     def __init__(
         self,
         input_dim: int,
         num_classes: int,
-        conv_channels: int = 64,
-        lstm_hidden_dim: int = 96,
-        lstm_layers: int = 1,
-        dropout: float = 0.2,
+        conv_channels: int = 96,
+        conv_kernel_size: int = 3,
+        flow_embedding_dim: int = 128,
+        lstm_hidden_dim: int = 128,
+        lstm_layers: int = 2,
+        dropout: float = 0.3,
+        bidirectional: bool = False,
     ) -> None:
         super().__init__()
-        self.conv1 = nn.Conv1d(
-            in_channels=input_dim,
-            out_channels=conv_channels,
-            kernel_size=3,
-            padding=1,
+        if input_dim <= 0:
+            raise ValueError("input_dim must be positive.")
+        if num_classes <= 1:
+            raise ValueError("num_classes must be >= 2.")
+        if conv_channels <= 0:
+            raise ValueError("conv_channels must be positive.")
+        if conv_kernel_size <= 0:
+            raise ValueError("conv_kernel_size must be positive.")
+        if flow_embedding_dim <= 0:
+            raise ValueError("flow_embedding_dim must be positive.")
+        if lstm_hidden_dim <= 0:
+            raise ValueError("lstm_hidden_dim must be positive.")
+        if lstm_layers <= 0:
+            raise ValueError("lstm_layers must be positive.")
+
+        padding = conv_kernel_size // 2
+        self.input_dim = input_dim
+        self.feature_cnn = nn.Sequential(
+            nn.Conv1d(1, conv_channels, kernel_size=conv_kernel_size, padding=padding),
+            nn.BatchNorm1d(conv_channels),
+            nn.GELU(),
+            nn.Conv1d(conv_channels, conv_channels, kernel_size=conv_kernel_size, padding=padding),
+            nn.BatchNorm1d(conv_channels),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.AdaptiveAvgPool1d(1),
         )
-        self.conv2 = nn.Conv1d(
-            in_channels=conv_channels,
-            out_channels=conv_channels,
-            kernel_size=3,
-            padding=1,
-        )
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(dropout)
-        self.lstm = nn.LSTM(
-            input_size=conv_channels,
+        self.flow_projection = nn.Linear(conv_channels, flow_embedding_dim)
+        self.temporal_lstm = nn.LSTM(
+            input_size=flow_embedding_dim,
             hidden_size=lstm_hidden_dim,
             num_layers=lstm_layers,
             batch_first=True,
+            dropout=dropout if lstm_layers > 1 else 0.0,
+            bidirectional=bidirectional,
         )
-        self.classifier = nn.Linear(lstm_hidden_dim, num_classes)
+        lstm_output_dim = lstm_hidden_dim * (2 if bidirectional else 1)
+        self.classifier = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(lstm_output_dim, num_classes),
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.ndim != 3:
             raise ValueError("Network model expects input with shape [batch, seq_len, features].")
 
-        x = x.transpose(1, 2)
-        x = self.relu(self.conv1(x))
-        x = self.dropout(x)
-        x = self.relu(self.conv2(x))
-        x = self.dropout(x)
+        batch_size, seq_len, feature_dim = x.shape
+        if feature_dim != self.input_dim:
+            raise ValueError(
+                f"Expected {self.input_dim} features per flow, got {feature_dim}. "
+                "Run CICIDS preprocessing with matching target_feature_count."
+            )
 
-        x = x.transpose(1, 2)
-        x, _ = self.lstm(x)
-        sequence_repr = x[:, -1, :]
+        # Apply 1D CNN on each flow vector to learn cross-feature interactions.
+        flow_vectors = x.reshape(batch_size * seq_len, 1, feature_dim)
+        flow_features = self.feature_cnn(flow_vectors).squeeze(-1)
+        flow_embeddings = self.flow_projection(flow_features).reshape(batch_size, seq_len, -1)
+
+        # Model temporal evolution across consecutive flow embeddings.
+        temporal_outputs, _ = self.temporal_lstm(flow_embeddings)
+        sequence_repr = temporal_outputs[:, -1, :]
         logits = self.classifier(sequence_repr)
         return logits
 
 
 class NetworkExpert(BaseExpert):
-    """Expert specialized for VPC/network-flow anomaly detection."""
+    """Expert specialized for CICIDS network-flow anomaly detection."""
 
     def __init__(
         self,
-        input_dim: int = 16,
+        input_dim: int = 80,
         class_names: Sequence[str] | None = None,
         model_path: str | Path | None = None,
         device: str | torch.device | None = None,
     ) -> None:
         super().__init__(name="network_expert")
-        default_class_names = ("Normal", "DDoS", "Brute Force", "Port Scan", "Data Exfiltration")
+        default_class_names = CANONICAL_CICIDS_15_CLASSES
         checkpoint_config: dict[str, Any] = {}
         checkpoint_class_names: tuple[str, ...] = ()
         model_path_obj = Path(model_path) if model_path is not None else None
@@ -90,19 +120,25 @@ class NetworkExpert(BaseExpert):
         self.class_names: tuple[str, ...] = resolved_class_names
 
         resolved_input_dim = int(checkpoint_config.get("input_dim", input_dim))
-        resolved_conv_channels = int(checkpoint_config.get("conv_channels", 64))
-        resolved_lstm_hidden_dim = int(checkpoint_config.get("lstm_hidden_dim", 96))
-        resolved_lstm_layers = int(checkpoint_config.get("lstm_layers", 1))
-        resolved_dropout = float(checkpoint_config.get("dropout", 0.2))
+        resolved_conv_channels = int(checkpoint_config.get("conv_channels", 96))
+        resolved_conv_kernel_size = int(checkpoint_config.get("conv_kernel_size", 3))
+        resolved_flow_embedding_dim = int(checkpoint_config.get("flow_embedding_dim", 128))
+        resolved_lstm_hidden_dim = int(checkpoint_config.get("lstm_hidden_dim", 128))
+        resolved_lstm_layers = int(checkpoint_config.get("lstm_layers", 2))
+        resolved_dropout = float(checkpoint_config.get("dropout", 0.3))
+        resolved_bidirectional = _to_bool(checkpoint_config.get("bidirectional", False))
 
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.model = CNNLSTMClassifier(
             input_dim=resolved_input_dim,
             num_classes=resolved_num_classes,
             conv_channels=resolved_conv_channels,
+            conv_kernel_size=resolved_conv_kernel_size,
+            flow_embedding_dim=resolved_flow_embedding_dim,
             lstm_hidden_dim=resolved_lstm_hidden_dim,
             lstm_layers=resolved_lstm_layers,
             dropout=resolved_dropout,
+            bidirectional=resolved_bidirectional,
         ).to(self.device)
 
         if model_path_obj is not None:
@@ -143,7 +179,11 @@ class NetworkExpert(BaseExpert):
         raise ValueError("Network input must be [seq_len, features] or [batch, seq_len, features].")
 
     def _compute_anomaly_score(self, probabilities: torch.Tensor) -> float:
-        if "Normal" in self.class_names:
+        if "Benign" in self.class_names:
+            normal_index = self.class_names.index("Benign")
+            normal_probability = float(probabilities[normal_index].item())
+            score = 1.0 - normal_probability
+        elif "Normal" in self.class_names:
             normal_index = self.class_names.index("Normal")
             normal_probability = float(probabilities[normal_index].item())
             score = 1.0 - normal_probability
@@ -221,4 +261,13 @@ class NetworkExpert(BaseExpert):
         return tuple(generated)
 
 
+def _to_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
 __all__ = ["CNNLSTMClassifier", "NetworkExpert"]
+
