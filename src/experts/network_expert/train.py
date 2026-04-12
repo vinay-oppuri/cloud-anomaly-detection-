@@ -9,6 +9,7 @@ from typing import Any
 import torch
 from torch import nn
 from torch.optim import AdamW
+from torch.utils.data import WeightedRandomSampler
 
 from src.experts.network_expert.model import CNNLSTMClassifier
 from src.training.checkpointing import (
@@ -49,6 +50,7 @@ class NetworkBundleTrainConfig:
     dropout: float
     bidirectional: bool
     disable_class_weights: bool
+    use_balanced_sampler: bool
 
 
 def parse_args() -> NetworkBundleTrainConfig:
@@ -83,6 +85,12 @@ def parse_args() -> NetworkBundleTrainConfig:
         action="store_true",
         help="Disable inverse-frequency class weighting in CrossEntropyLoss.",
     )
+    parser.add_argument(
+        "--balanced-sampler",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use WeightedRandomSampler to improve minority-class learning.",
+    )
     ns = parser.parse_args()
     return NetworkBundleTrainConfig(
         processed_data=ns.processed_data,
@@ -104,6 +112,7 @@ def parse_args() -> NetworkBundleTrainConfig:
         dropout=ns.dropout,
         bidirectional=ns.bidirectional,
         disable_class_weights=ns.disable_class_weights,
+        use_balanced_sampler=ns.balanced_sampler,
     )
 
 
@@ -168,10 +177,25 @@ def run_training(config: NetworkBundleTrainConfig) -> dict[str, Any]:
         patience=2,
     )
 
+    train_dataset = SequenceDataset(train_X, train_y)
+    sampler = None
+    class_weights_cpu = _inverse_frequency_weights(train_y, num_classes=len(class_names))
+    if config.use_balanced_sampler:
+        sample_weights = class_weights_cpu[train_y].to(dtype=torch.float64)
+        sampler_generator = torch.Generator()
+        sampler_generator.manual_seed(config.seed)
+        sampler = WeightedRandomSampler(
+            weights=sample_weights,
+            num_samples=int(sample_weights.shape[0]),
+            replacement=True,
+            generator=sampler_generator,
+        )
+
     train_loader = build_dataloader(
-        SequenceDataset(train_X, train_y),
+        train_dataset,
         batch_size=config.batch_size,
-        shuffle=True,
+        shuffle=sampler is None,
+        sampler=sampler,
     )
     val_loader = build_dataloader(
         SequenceDataset(val_X, val_y),
@@ -201,13 +225,14 @@ def run_training(config: NetworkBundleTrainConfig) -> dict[str, Any]:
         print(f"  {class_name}: {class_counts[idx]}")
     class_weights = None
     if not config.disable_class_weights:
-        class_weights = _inverse_frequency_weights(train_y, num_classes=len(class_names)).to(device)
+        class_weights = class_weights_cpu.to(device)
         weights_text = ", ".join(
             f"{class_names[idx]}={float(class_weights[idx]):.4f}" for idx in range(len(class_names))
         )
         print(f"Using class weights: {weights_text}")
     else:
         print("Using class weights: disabled")
+    print(f"Using balanced sampler: {'enabled' if config.use_balanced_sampler else 'disabled'}")
     criterion = nn.CrossEntropyLoss(weight=class_weights)
 
     paths = resolve_checkpoint_paths(config.output_dir, prefix="network_expert")

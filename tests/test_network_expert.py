@@ -3,12 +3,13 @@ from __future__ import annotations
 import pytest
 import torch
 
-from src.experts.network_expert.constants import CANONICAL_CICIDS_15_CLASSES
+from src.experts.network_expert.constants import ATTACK_FAMILY_CLASSES, CANONICAL_CICIDS_15_CLASSES
 from src.experts.network_expert.model import CNNLSTMClassifier
 from src.experts.network_expert.preprocessor import (
     _canonicalize_label,
     _fit_feature_names,
     _fit_feature_vector,
+    _merge_rare_classes,
     _ordered_class_names,
 )
 
@@ -47,6 +48,33 @@ def test_force_15_class_schema_is_stable() -> None:
         force_15_class_schema=True,
     )
     assert classes[: len(CANONICAL_CICIDS_15_CLASSES)] == list(CANONICAL_CICIDS_15_CLASSES)
+
+
+def test_binary_schema_maps_any_attack_to_anomaly() -> None:
+    assert _canonicalize_label("Benign", label_schema="binary") == "Benign"
+    assert _canonicalize_label("DoS attacks-Hulk", label_schema="binary") == "Anomaly"
+
+
+def test_family_schema_collapses_attack_families() -> None:
+    assert _canonicalize_label("DDOS attack-HOIC", label_schema="family") == "DDoS"
+    assert _canonicalize_label("Brute Force -XSS", label_schema="family") == "WebAttack"
+    classes = _ordered_class_names(
+        labels=["Benign", "DDoS", "WebAttack"],
+        label_schema="family",
+        force_15_class_schema=False,
+    )
+    assert classes == ["Benign", "DDoS", "WebAttack"]
+    assert ATTACK_FAMILY_CLASSES[0] == "Benign"
+
+
+def test_merge_rare_classes_for_fine_schema() -> None:
+    merged = _merge_rare_classes(
+        labels=["Benign", "DoS-Hulk", "DoS-Hulk", "Infiltration"],
+        min_support=2,
+        label_schema="fine",
+        rare_class_bucket_name="OtherAttack",
+    )
+    assert merged == ["Benign", "DoS-Hulk", "DoS-Hulk", "OtherAttack"]
 
 
 def test_feature_padding_and_truncation_helpers() -> None:

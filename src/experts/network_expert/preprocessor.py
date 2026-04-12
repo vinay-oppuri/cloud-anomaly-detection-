@@ -5,7 +5,7 @@ import csv
 import json
 import itertools
 import re
-from collections import deque
+from collections import Counter, deque
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -14,7 +14,7 @@ import numpy as np
 import torch
 from tqdm.auto import tqdm
 
-from src.experts.network_expert.constants import CANONICAL_CICIDS_15_CLASSES
+from src.experts.network_expert.constants import ATTACK_FAMILY_CLASSES, CANONICAL_CICIDS_15_CLASSES
 
 DEFAULT_INPUT_DIR = Path("data/raw/cicids2018")
 DEFAULT_OUTPUT_DIR = Path("data/processed")
@@ -36,7 +36,10 @@ class CICIDSPreprocessConfig:
     max_files: int | None = None
     target_feature_count: int = 80
     add_engineered_totals: bool = True
-    force_15_class_schema: bool = True
+    label_schema: str = "binary"
+    min_class_support: int = 25
+    rare_class_bucket_name: str = "OtherAttack"
+    force_15_class_schema: bool = False
     max_windows: int | None = 30000
 
 
@@ -63,10 +66,34 @@ def parse_args() -> CICIDSPreprocessConfig:
         help="Add flow-level totals to reach a stable 80-feature tensor.",
     )
     parser.add_argument(
+        "--label-schema",
+        type=str,
+        choices=("binary", "family", "fine"),
+        default="binary",
+        help=(
+            "Label granularity: "
+            "binary (Benign/Anomaly), "
+            "family (Benign + attack families), "
+            "fine (canonical CICIDS attack classes)."
+        ),
+    )
+    parser.add_argument(
+        "--min-class-support",
+        type=int,
+        default=25,
+        help="Merge attack classes/families with fewer samples than this threshold into a single bucket.",
+    )
+    parser.add_argument(
+        "--rare-class-bucket-name",
+        type=str,
+        default="OtherAttack",
+        help="Name of the merged bucket used when classes are below min-class-support.",
+    )
+    parser.add_argument(
         "--force-15-class-schema",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Use the canonical CICIDS 15-class taxonomy (Benign + 14 attacks).",
+        default=False,
+        help="For --label-schema fine, force all canonical 15 classes even if some have zero support.",
     )
     parser.add_argument(
         "--max-windows",
@@ -90,6 +117,9 @@ def parse_args() -> CICIDSPreprocessConfig:
         max_files=ns.max_files,
         target_feature_count=ns.target_feature_count,
         add_engineered_totals=ns.add_engineered_totals,
+        label_schema=ns.label_schema,
+        min_class_support=max(0, int(ns.min_class_support)),
+        rare_class_bucket_name=str(ns.rare_class_bucket_name),
         force_15_class_schema=ns.force_15_class_schema,
         max_windows=max_windows,
     )
@@ -116,6 +146,10 @@ class CICIDSPreprocessor:
             raise ValueError("stride must be positive.")
         if self.config.target_feature_count <= 0:
             raise ValueError("target_feature_count must be positive.")
+        if self.config.label_schema not in {"binary", "family", "fine"}:
+            raise ValueError("label_schema must be one of: binary, family, fine.")
+        if self.config.min_class_support < 0:
+            raise ValueError("min_class_support must be >= 0.")
         self._validate_ratios()
 
     def run(self) -> dict[str, object]:
@@ -191,6 +225,7 @@ class CICIDSPreprocessor:
                 for row in rows_bar:
                     label_text = _canonicalize_label(
                         row.get(label_column, ""),
+                        label_schema=self.config.label_schema,
                         force_15_class_schema=self.config.force_15_class_schema,
                     )
                     if not label_text:
@@ -266,12 +301,20 @@ class CICIDSPreprocessor:
         if model_feature_names is None:
             raise ValueError("Feature names could not be resolved.")
 
+        adjusted_labels = _merge_rare_classes(
+            labels=window_labels_raw,
+            min_support=self.config.min_class_support,
+            label_schema=self.config.label_schema,
+            rare_class_bucket_name=self.config.rare_class_bucket_name,
+        )
         class_names = _ordered_class_names(
-            window_labels_raw,
+            adjusted_labels,
+            label_schema=self.config.label_schema,
             force_15_class_schema=self.config.force_15_class_schema,
+            rare_class_bucket_name=self.config.rare_class_bucket_name,
         )
         class_to_index = {name: idx for idx, name in enumerate(class_names)}
-        labels = np.asarray([class_to_index[item] for item in window_labels_raw], dtype=np.int64)
+        labels = np.asarray([class_to_index[item] for item in adjusted_labels], dtype=np.int64)
         features = np.stack(sequences, axis=0).astype(np.float32, copy=False)
 
         split_indices = _stratified_split_indices(
@@ -480,6 +523,8 @@ class CICIDSPreprocessor:
         return {
             "task": "prepare_cicids_network_dataset",
             "output_path": str(self.config.output_path),
+            "label_schema": self.config.label_schema,
+            "min_class_support": int(self.config.min_class_support),
             "sequence_length": int(payload["sequence_length"]),
             "num_classes": len(payload["class_names"]),
             "num_features": len(payload["feature_names"]),
@@ -527,7 +572,12 @@ def _normalize_label(raw: object) -> str:
     return str(raw).strip().strip('"').strip("'")
 
 
-def _canonicalize_label(raw: object, *, force_15_class_schema: bool = True) -> str:
+def _canonicalize_label(
+    raw: object,
+    *,
+    label_schema: str = "fine",
+    force_15_class_schema: bool = True,
+) -> str:
     label = _normalize_label(raw)
     if not label:
         return ""
@@ -537,6 +587,89 @@ def _canonicalize_label(raw: object, *, force_15_class_schema: bool = True) -> s
         # Skip header-like/noise rows that leak into data.
         return ""
 
+    fine_label = _to_fine_label(compact)
+    if label_schema == "binary":
+        if fine_label == "Benign":
+            return "Benign"
+        return "Anomaly"
+    if label_schema == "family":
+        if fine_label == "Benign":
+            return "Benign"
+        if fine_label:
+            return _to_family_label(fine_label)
+        return "OtherAttack"
+    if fine_label:
+        return fine_label
+    if force_15_class_schema:
+        return ""
+    return label
+
+
+def _resolve_column(fieldnames: Iterable[str], candidates: Sequence[str]) -> str | None:
+    normalized = {name.strip().lower(): name for name in fieldnames}
+    for candidate in candidates:
+        key = candidate.strip().lower()
+        if key in normalized:
+            return normalized[key]
+    return None
+
+
+def _ordered_class_names(
+    labels: Sequence[str],
+    *,
+    label_schema: str = "fine",
+    force_15_class_schema: bool,
+    rare_class_bucket_name: str = "OtherAttack",
+) -> list[str]:
+    unique = set(labels)
+    if label_schema == "binary":
+        return ["Benign", "Anomaly"]
+    if label_schema == "family":
+        ordered = [name for name in ATTACK_FAMILY_CLASSES if name in unique]
+        if force_15_class_schema:
+            return list(ATTACK_FAMILY_CLASSES)
+        if rare_class_bucket_name in unique and rare_class_bucket_name not in ordered:
+            ordered.append(rare_class_bucket_name)
+        return ordered
+
+    if force_15_class_schema:
+        base = list(CANONICAL_CICIDS_15_CLASSES)
+        extras = sorted(item for item in unique if item not in CANONICAL_CICIDS_15_CLASSES)
+        return base + extras
+
+    present_in_canonical = [name for name in CANONICAL_CICIDS_15_CLASSES if name in unique]
+    extras = sorted(item for item in unique if item not in CANONICAL_CICIDS_15_CLASSES)
+    return present_in_canonical + extras
+
+
+def _merge_rare_classes(
+    *,
+    labels: Sequence[str],
+    min_support: int,
+    label_schema: str,
+    rare_class_bucket_name: str,
+) -> list[str]:
+    if min_support <= 1:
+        return list(labels)
+    if label_schema == "binary":
+        return list(labels)
+
+    counts = Counter(labels)
+    protected = {"Benign", "Anomaly"}
+    rare_labels = {name for name, count in counts.items() if count < min_support and name not in protected}
+    if not rare_labels:
+        return list(labels)
+
+    merged: list[str] = []
+    for label in labels:
+        if label in rare_labels:
+            merged.append(rare_class_bucket_name)
+        else:
+            merged.append(label)
+    return merged
+
+
+def _to_fine_label(compact: str) -> str:
     if compact in {"benign", "normal"} or "benign" in compact:
         return "Benign"
 
@@ -575,31 +708,27 @@ def _canonicalize_label(raw: object, *, force_15_class_schema: bool = True) -> s
     if "bot" in compact:
         return "Botnet"
 
-    if force_15_class_schema:
-        # In strict 15-class mode, discard unknown labels instead of creating extra classes.
+    if compact.startswith("label"):
         return ""
-    return label
+    return ""
 
 
-def _resolve_column(fieldnames: Iterable[str], candidates: Sequence[str]) -> str | None:
-    normalized = {name.strip().lower(): name for name in fieldnames}
-    for candidate in candidates:
-        key = candidate.strip().lower()
-        if key in normalized:
-            return normalized[key]
-    return None
-
-
-def _ordered_class_names(labels: Sequence[str], *, force_15_class_schema: bool) -> list[str]:
-    unique = sorted(set(labels))
-    if force_15_class_schema:
-        base = list(CANONICAL_CICIDS_15_CLASSES)
-        extras = [label for label in unique if label not in CANONICAL_CICIDS_15_CLASSES]
-        return base + extras
-
-    benign = [label for label in unique if label.strip().lower() in {"benign", "normal"}]
-    others = [label for label in unique if label not in benign]
-    return benign + others
+def _to_family_label(fine_label: str) -> str:
+    if fine_label.startswith("DDoS-"):
+        return "DDoS"
+    if fine_label.startswith("DoS-"):
+        return "DoS"
+    if fine_label.startswith("Brute Force"):
+        return "BruteForce"
+    if fine_label.startswith("Web Attack"):
+        return "WebAttack"
+    if fine_label == "Botnet":
+        return "Botnet"
+    if fine_label == "Infiltration":
+        return "Infiltration"
+    if fine_label == "Benign":
+        return "Benign"
+    return "OtherAttack"
 
 
 def _fit_feature_vector(values: Sequence[float], *, target_count: int) -> list[float]:

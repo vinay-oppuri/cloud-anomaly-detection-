@@ -6,7 +6,7 @@ from typing import Literal
 import numpy as np
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, Sampler
 from tqdm.auto import tqdm
 
 
@@ -26,12 +26,15 @@ def build_dataloader(
     *,
     batch_size: int,
     shuffle: bool,
+    sampler: Sampler[int] | None = None,
     num_workers: int = 0,
 ) -> DataLoader[tuple[torch.Tensor, torch.Tensor]]:
+    effective_shuffle = shuffle if sampler is None else False
     return DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=shuffle,
+        shuffle=effective_shuffle,
+        sampler=sampler,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
     )

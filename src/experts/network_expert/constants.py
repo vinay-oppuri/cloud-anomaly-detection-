@@ -18,3 +18,14 @@ CANONICAL_CICIDS_15_CLASSES: tuple[str, ...] = (
     "Web Attack-XSS",
 )
 
+ATTACK_FAMILY_CLASSES: tuple[str, ...] = (
+    "Benign",
+    "DDoS",
+    "DoS",
+    "BruteForce",
+    "WebAttack",
+    "Botnet",
+    "Infiltration",
+    "OtherAttack",
+)
+
