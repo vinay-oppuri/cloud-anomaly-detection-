@@ -1,88 +1,37 @@
 from __future__ import annotations
 
+import numpy as np
+import pandas as pd
 import pytest
 import torch
 
-from src.experts.network_expert.constants import ATTACK_FAMILY_CLASSES, CANONICAL_CICIDS_15_CLASSES
 from src.experts.network_expert.model import CNNLSTMClassifier
-from src.experts.network_expert.preprocessor import (
-    _canonicalize_label,
-    _fit_feature_names,
-    _fit_feature_vector,
-    _merge_rare_classes,
-    _ordered_class_names,
-)
+from src.training.cicids_preprocess import build_sequences, drop_low_support_labels
 
 
-@pytest.mark.parametrize(
-    ("raw_label", "expected"),
-    [
-        ("Benign", "Benign"),
-        ("DoS attacks-Hulk", "DoS-Hulk"),
-        ("DDOS attack-HOIC", "DDoS-HOIC"),
-        ("DDoS attacks-LOIC-UDP", "DDoS-LOIC-UDP"),
-        ("FTP-BruteForce", "Brute Force-FTP"),
-        ("Brute Force -XSS", "Web Attack-XSS"),
-        ("SQL Injection", "Web Attack-SQL Injection"),
-    ],
-)
-def test_canonicalize_label_maps_common_cicids_variants(raw_label: str, expected: str) -> None:
-    assert _canonicalize_label(raw_label) == expected
-
-
-def test_canonicalize_label_drops_header_noise_rows() -> None:
-    assert _canonicalize_label("Label") == ""
-
-
-def test_canonicalize_label_drops_unknown_when_force_15_enabled() -> None:
-    assert _canonicalize_label("SomeFutureAttack") == ""
-
-
-def test_canonicalize_label_keeps_unknown_when_force_15_disabled() -> None:
-    assert _canonicalize_label("SomeFutureAttack", force_15_class_schema=False) == "SomeFutureAttack"
-
-
-def test_force_15_class_schema_is_stable() -> None:
-    classes = _ordered_class_names(
-        labels=["Benign", "DoS-Hulk", "DDoS-HOIC"],
-        force_15_class_schema=True,
+def test_drop_low_support_labels_removes_explicit_and_rare_classes() -> None:
+    df = pd.DataFrame(
+        {
+            "f1": [1, 2, 3, 4, 5, 6],
+            "Label": ["Benign", "Benign", "Benign", "Botnet", "Botnet", "DoS_Slowloris"],
+        }
     )
-    assert classes[: len(CANONICAL_CICIDS_15_CLASSES)] == list(CANONICAL_CICIDS_15_CLASSES)
-
-
-def test_binary_schema_maps_any_attack_to_anomaly() -> None:
-    assert _canonicalize_label("Benign", label_schema="binary") == "Benign"
-    assert _canonicalize_label("DoS attacks-Hulk", label_schema="binary") == "Anomaly"
-
-
-def test_family_schema_collapses_attack_families() -> None:
-    assert _canonicalize_label("DDOS attack-HOIC", label_schema="family") == "DDoS"
-    assert _canonicalize_label("Brute Force -XSS", label_schema="family") == "WebAttack"
-    classes = _ordered_class_names(
-        labels=["Benign", "DDoS", "WebAttack"],
-        label_schema="family",
-        force_15_class_schema=False,
+    cleaned, removed = drop_low_support_labels(
+        df,
+        min_rows=2,
+        explicit_drop={"Botnet"},
     )
-    assert classes == ["Benign", "DDoS", "WebAttack"]
-    assert ATTACK_FAMILY_CLASSES[0] == "Benign"
+    assert set(cleaned["Label"].unique().tolist()) == {"Benign"}
+    assert removed["Botnet"] == 2
+    assert removed["DoS_Slowloris"] == 1
 
 
-def test_merge_rare_classes_for_fine_schema() -> None:
-    merged = _merge_rare_classes(
-        labels=["Benign", "DoS-Hulk", "DoS-Hulk", "Infiltration"],
-        min_support=2,
-        label_schema="fine",
-        rare_class_bucket_name="OtherAttack",
-    )
-    assert merged == ["Benign", "DoS-Hulk", "DoS-Hulk", "OtherAttack"]
-
-
-def test_feature_padding_and_truncation_helpers() -> None:
-    vector = _fit_feature_vector([1.0, 2.0], target_count=4)
-    assert vector == [1.0, 2.0, 0.0, 0.0]
-
-    names = _fit_feature_names(["a", "b", "c"], target_count=2)
-    assert names == ["a", "b"]
+def test_build_sequences_uses_last_label_in_window() -> None:
+    x = np.arange(24, dtype=np.float32).reshape(6, 4)
+    y = np.asarray([0, 0, 1, 1, 0, 1], dtype=np.int64)
+    x_seq, y_seq = build_sequences(x, y, seq_len=4)
+    assert x_seq.shape == (2, 4, 4)
+    assert y_seq.tolist() == [1, 1]
 
 
 def test_cnn_lstm_forward_shape() -> None:

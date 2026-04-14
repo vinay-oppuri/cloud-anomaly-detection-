@@ -112,6 +112,14 @@ class IncidentAdvisor:
             )
             return IncidentAdvice(reason=reason, action=action, source="heuristic")
 
+        network_reason_action = _network_heuristic_advice(anomaly_type)
+        if network_reason_action is not None:
+            return IncidentAdvice(
+                reason=network_reason_action["reason"],
+                action=network_reason_action["action"],
+                source="heuristic",
+            )
+
         reason = (
             f"{severity} anomaly detected with type '{anomaly_type}' from expert signals ({triggered_text})."
         )
@@ -141,6 +149,36 @@ def _safe_json_parse(text: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             return {}
     return {}
+
+
+def _network_heuristic_advice(anomaly_type: str) -> dict[str, str] | None:
+    mapping = {
+        "DDoS_Flood": {
+            "reason": "High-rate one-sided traffic patterns fit a denial-of-service or flood scenario.",
+            "action": "Apply rate-limits or upstream scrubbing, block top sources, and protect exposed services with WAF or DDoS controls.",
+        },
+        "Recon_Scan": {
+            "reason": "Repeated low-payload probe-like flows suggest reconnaissance or scanning before a larger attack.",
+            "action": "Block or rate-limit scanning sources, close unused ports, tighten firewall rules, and review recent access exposure.",
+        },
+        "Brute_Force_Abuse": {
+            "reason": "Short repetitive connection attempts with reset or handshake patterns suggest credential abuse or brute-force behavior.",
+            "action": "Block the offending sources, enforce MFA or password resets, lock targeted accounts, and inspect authentication logs.",
+        },
+        "Botnet_C2_Beaconing": {
+            "reason": "Suspicious low-volume control-like traffic is consistent with botnet command-and-control beaconing.",
+            "action": "Isolate the suspected host, block outbound destinations, run endpoint malware scans, and rotate any exposed credentials or tokens.",
+        },
+        "Data_Exfiltration": {
+            "reason": "Outbound-heavy anomalous traffic suggests possible data exfiltration from the environment.",
+            "action": "Block egress immediately, identify the transferred data, rotate secrets, and review DLP, proxy, and host activity logs.",
+        },
+        "Unknown_Network_Anomaly": {
+            "reason": "Traffic deviates from the learned benign baseline but does not match a stronger network rule signature.",
+            "action": "Inspect the flagged flows, compare them against recent baselines, and keep the related host or service under elevated monitoring.",
+        },
+    }
+    return mapping.get(anomaly_type)
 
 
 def _resolve_api_key(*, explicit: str | None) -> str | None:

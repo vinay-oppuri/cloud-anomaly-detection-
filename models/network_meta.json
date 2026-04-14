@@ -1,0 +1,29 @@
+{
+  "n_features": 76,
+  "seq_len": 10,
+  "threshold": 0.816010057926178,
+  "cfg": {
+    "cnn_channels": 128,
+    "cnn_kernel": 3,
+    "lstm_hidden": 256,
+    "lstm_layers": 2,
+    "fc_hidden": 128,
+    "dropout": 0.3,
+    "batch_size": 512,
+    "epochs": 40,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "grad_clip": 1.0,
+    "patience": 8,
+    "seed": 42
+  },
+  "test": {
+    "f1": 0.9704281150159745,
+    "auc": 0.9986221516758922,
+    "threshold": 0.816010057926178,
+    "tp": 37968,
+    "fp": 535,
+    "fn": 1779
+  },
+  "dataset": "CSE-CICIDS2018 (binary)"
+}

@@ -7,8 +7,12 @@ requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.116.0",
     "google-genai>=1.13.0",
+    "joblib>=1.5.3",
+    "matplotlib>=3.10.8",
     "numpy>=2.3.0",
+    "pandas>=3.0.2",
     "python-multipart>=0.0.20",
+    "scikit-learn>=1.8.0",
     "torch==2.11.0+cu128",
     "tqdm>=4.66.0",
     "uvicorn>=0.35.0",
@@ -16,12 +20,16 @@ dependencies = [
 
 [project.scripts]
 prepare_hdfs = "src.experts.system_expert.parser:main"
-prepare_cicids = "src.experts.network_expert.preprocessor:main"
+prepare_cicids = "src.experts.network_expert.parser:main"
+preprocess_cicids_binary = "src.experts.network_expert.parser:main"
 train_hdfs = "src.experts.system_expert.train:main"
 train_cicids = "src.experts.network_expert.train:main"
+train_cicids_binary = "src.experts.network_expert.train:main"
 test_hdfs = "src.experts.system_expert.test:main"
 serve_system_api = "src.api.system_api:main"
+serve_network_api = "src.api.network_api:main"
 test_cicids = "src.experts.network_expert.test:main"
+test_cicids_binary = "src.experts.network_expert.test:main"
 
 [build-system]
 requires = ["hatchling>=1.26.0"]
