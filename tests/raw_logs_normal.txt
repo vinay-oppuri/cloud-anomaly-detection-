@@ -1,0 +1,10 @@
+timestamp=2024-04-15T21:20:01.000Z, duration=45000, fwdpkts=4, bwdpkts=4, fwdbytes=450, bwdbytes=600, pps=0.17, syn=1, ack=1, rst=0, fin=0
+timestamp=2024-04-15T21:20:05.000Z, duration=12000, fwdpkts=2, bwdpkts=2, fwdbytes=120, bwdbytes=120, pps=0.33, syn=1, ack=1, rst=0, fin=0
+timestamp=2024-04-15T21:20:10.000Z, duration=60000, fwdpkts=6, bwdpkts=5, fwdbytes=800, bwdbytes=900, pps=0.18, syn=1, ack=1, rst=0, fin=0
+timestamp=2024-04-15T21:20:15.000Z, duration=30000, fwdpkts=3, bwdpkts=3, fwdbytes=300, bwdbytes=300, pps=0.20, syn=1, ack=1, rst=0, fin=0
+timestamp=2024-04-15T21:20:20.000Z, duration=80000, fwdpkts=10, bwdpkts=8, fwdbytes=1200, bwdbytes=1400, pps=0.22, syn=1, ack=1, rst=0, fin=0
+timestamp=2024-04-15T21:20:25.000Z, duration=25000, fwdpkts=4, bwdpkts=3, fwdbytes=400, bwdbytes=400, pps=0.28, syn=1, ack=1, rst=0, fin=0
+timestamp=2024-04-15T21:20:30.000Z, duration=42000, fwdpkts=5, bwdpkts=5, fwdbytes=500, bwdbytes=500, pps=0.24, syn=1, ack=1, rst=0, fin=0
+timestamp=2024-04-15T21:20:35.000Z, duration=15000, fwdpkts=2, bwdpkts=2, fwdbytes=180, bwdbytes=180, pps=0.26, syn=1, ack=1, rst=0, fin=0
+timestamp=2024-04-15T21:20:40.000Z, duration=55000, fwdpkts=7, bwdpkts=6, fwdbytes=900, bwdbytes=1000, pps=0.23, syn=1, ack=1, rst=0, fin=0
+timestamp=2024-04-15T21:20:45.000Z, duration=38000, fwdpkts=4, bwdpkts=4, fwdbytes=420, bwdbytes=420, pps=0.21, syn=1, ack=1, rst=0, fin=0

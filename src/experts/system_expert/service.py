@@ -11,7 +11,7 @@ import torch
 from torch import nn
 from tqdm.auto import tqdm
 
-from anomaly_classifier import classify_anomaly
+from src.experts.system_expert.classifier import classify_anomaly
 from src.experts.system_expert.model import SystemExpertTransformer
 from src.interpreter.advisor import IncidentAdvisor
 from src.training.data import SequenceDataset

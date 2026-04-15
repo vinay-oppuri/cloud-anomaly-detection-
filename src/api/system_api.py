@@ -72,8 +72,8 @@ def health() -> dict[str, Any]:
 
 @app.post("/v1/system/analyze")
 def analyze_system_log(payload: AnalyzeSystemLogRequest) -> dict[str, Any]:
-    service = get_system_service()
     try:
+        service = get_system_service()
         if payload.event_sequence is not None and payload.event_sequence.strip():
             return service.analyze_event_sequence(
                 payload.event_sequence,
@@ -86,7 +86,8 @@ def analyze_system_log(payload: AnalyzeSystemLogRequest) -> dict[str, Any]:
             return service.analyze_log_lines(payload.log_lines, event_name=payload.event_name)
         raise ValueError("No input content found.")
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        status_code = 503 if isinstance(exc, FileNotFoundError) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
 
 @app.post("/v1/system/analyze-file")
@@ -94,20 +95,21 @@ async def analyze_system_log_file(
     event_name: str = Form("uploaded-log"),
     log_file: UploadFile = File(...),
 ) -> dict[str, Any]:
-    service = get_system_service()
     try:
+        service = get_system_service()
         raw = await log_file.read()
         text = raw.decode("utf-8", errors="ignore")
         lines = text.splitlines()
         return service.analyze_log_lines(lines, event_name=event_name)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        status_code = 503 if isinstance(exc, FileNotFoundError) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
 
 def main() -> None:
     import uvicorn
 
-    host = os.getenv("SYSTEM_API_HOST", "0.0.0.0")
+    host = os.getenv("SYSTEM_API_HOST", "127.0.0.1")
     port = int(os.getenv("SYSTEM_API_PORT", "8000"))
     uvicorn.run("src.api.system_api:app", host=host, port=port, reload=False)
 

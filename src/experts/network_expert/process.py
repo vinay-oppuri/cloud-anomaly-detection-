@@ -144,10 +144,7 @@ def _prepare_loaded_chunk(df: pd.DataFrame) -> pd.DataFrame:
         if not pd.api.types.is_numeric_dtype(df[col]):
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Drop columns that are non-numeric in this chunk.
-    drop_non_numeric = [c for c in feature_cols if df[c].isna().all()]
-    if drop_non_numeric:
-        df = df.drop(columns=drop_non_numeric, errors="ignore")
+    # fill_non_numeric handled by to_numeric and fillna later
 
     # Use compact dtypes early to lower memory pressure.
     for col in df.columns:
@@ -233,12 +230,17 @@ def clean(df):
         df = df.drop(columns=to_drop, errors="ignore")
     pbar.update(1)
 
-    # Replace inf → NaN → median
-    df = df.replace([np.inf, -np.inf], np.nan)
+    # Replace inf -> NaN -> median (column-wise to avoid huge temporary allocations)
     num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     if "label_bin" in num_cols:
         num_cols.remove("label_bin")
-    df[num_cols] = df[num_cols].fillna(df[num_cols].median())
+    for col in num_cols:
+        col_values = df[col]
+        col_values = col_values.replace([np.inf, -np.inf], np.nan)
+        median_value = col_values.median()
+        if pd.isna(median_value):
+            median_value = 0.0
+        df[col] = col_values.fillna(median_value)
     pbar.update(1)
 
     # Clip negatives in win_bytes columns (CICFlowMeter bug)
@@ -254,6 +256,10 @@ def clean(df):
     except KeyboardInterrupt:
         pbar.close()
         raise
+    except MemoryError:
+        print("  Dedup skipped due memory pressure; continuing without duplicate removal.")
+    except np.core._exceptions._ArrayMemoryError:
+        print("  Dedup skipped due memory pressure; continuing without duplicate removal.")
     print(f"  Removed {before-len(df):,} duplicates")
     print(f"  Clean rows: {len(df):,}\n")
     pbar.update(1)
@@ -270,17 +276,13 @@ def scale(df):
         if not pd.api.types.is_numeric_dtype(feat_df[col]):
             feat_df[col] = pd.to_numeric(feat_df[col], errors="coerce")
 
-    # Drop columns that are entirely non-numeric after coercion.
-    dropped_non_numeric = [c for c in feat_df.columns if feat_df[c].isna().all()]
-    if dropped_non_numeric:
-        feat_df = feat_df.drop(columns=dropped_non_numeric)
-        print(f"  Dropped non-numeric columns: {dropped_non_numeric}")
+    # Disable dropping feature columns in this pass
 
     if feat_df.shape[1] == 0:
         raise ValueError("No numeric feature columns available after preprocessing.")
 
     feat_df = feat_df.replace([np.inf, -np.inf], np.nan)
-    feat_df = feat_df.fillna(feat_df.median(numeric_only=True))
+    feat_df = feat_df.fillna(feat_df.median(numeric_only=True)).fillna(0)
 
     feat_cols = feat_df.columns.tolist()
     X = feat_df.to_numpy(dtype=np.float32, copy=False)
@@ -296,7 +298,8 @@ def scale(df):
 def build_sequences(X, y, seq_len):
     """
     Sliding window of seq_len flows.
-    Label = label of last flow in window.
+    Label = anomaly if any flow in the window is anomalous.
+    This avoids missing attack windows where the last flow is benign.
     Step  = seq_len // 2  (50% overlap for more training samples)
     """
     print(f"[Seq] Building sequences (len={seq_len}, step={seq_len//2})...")
@@ -311,7 +314,7 @@ def build_sequences(X, y, seq_len):
         dynamic_ncols=True,
     ):
         Xs.append(X[i:i+seq_len])
-        ys.append(y[i+seq_len-1])
+        ys.append(int(np.max(y[i:i+seq_len])))
     Xs = np.array(Xs, dtype=np.float32)
     ys = np.array(ys, dtype=np.int64)
     n_anom = ys.sum()

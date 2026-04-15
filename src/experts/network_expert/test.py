@@ -23,7 +23,7 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
-from src.experts.network_expert.classifier import classify_network_anomaly
+from src.experts.network_expert.classifier import classify_network_anomaly, summarize_network_rows
 from src.experts.network_expert.model import CNNLSTMClassifier
 from src.interpreter.advisor import IncidentAdvisor
 
@@ -33,6 +33,10 @@ DEFAULT_METRICS_PATH = Path("models/network_meta.json")
 RAW_LOG_AUTO_THRESHOLD_CAP = 0.10
 RAW_LOG_DECISION_MIN_RATIO = 0.20
 RAW_LOG_DECISION_MIN_MAX_SCORE = 0.50
+RAW_LOG_RULE_HIGH_PPS = 5_000.0
+RAW_LOG_RULE_HIGH_BPS = 1_000_000.0
+RAW_LOG_RULE_ONE_SIDED = 0.30
+RAW_LOG_RULE_SHORT_FLOW = 0.40
 
 _NUM_PATTERN = r"[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?"
 _KEY_VALUE_RE = re.compile(
@@ -278,6 +282,7 @@ def run(config: BinaryAnalyzeConfig) -> dict[str, Any]:
         final_window_label=final_label,
         anomaly_window_ratio=anomaly_ratio,
         max_anomaly_score=max_score,
+        input_rows=input_rows,
     )
     response: dict[str, Any] = {
         "task": "network_binary_realworld_test",
@@ -771,6 +776,7 @@ def _resolve_session_decision(
     final_window_label: str,
     anomaly_window_ratio: float,
     max_anomaly_score: float,
+    input_rows: list[dict[str, Any]],
 ) -> tuple[str, str]:
     uses_raw_log_mode = bool(config.log_file is not None or config.log_text or config.interactive)
     if not uses_raw_log_mode:
@@ -780,6 +786,17 @@ def _resolve_session_decision(
         return "Anomaly", "raw_log_max_score_rule"
     if anomaly_window_ratio >= RAW_LOG_DECISION_MIN_RATIO:
         return "Anomaly", "raw_log_ratio_rule"
+    # Raw logs can have sparse feature extraction; use simple feature summary rules
+    # as a safety net to catch obvious high-rate one-sided attacks.
+    if input_rows:
+        summary = summarize_network_rows(input_rows)
+        if (
+            summary.get("p95_flow_pkts_per_sec", 0.0) >= RAW_LOG_RULE_HIGH_PPS
+            and summary.get("p95_flow_bytes_per_sec", 0.0) >= RAW_LOG_RULE_HIGH_BPS
+            and summary.get("one_sided_ratio", 0.0) >= RAW_LOG_RULE_ONE_SIDED
+            and summary.get("short_flow_ratio", 0.0) >= RAW_LOG_RULE_SHORT_FLOW
+        ):
+            return "Anomaly", "raw_log_feature_rule"
     return "Benign", "raw_log_session_rule"
 
 

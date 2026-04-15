@@ -151,6 +151,7 @@ class HDFSEventParser:
             reader = csv.DictReader(handle)
             if not reader.fieldnames:
                 raise ValueError(f"Missing CSV header in {path}")
+
             block_key = _resolve_column(
                 reader.fieldnames,
                 candidates=("BlockId", "blockid", "block_id", "blk_id", "blkid"),
@@ -166,11 +167,29 @@ class HDFSEventParser:
                     "features",
                 ),
             )
+
+            is_positional = False
             if block_key is None or sequence_key is None:
-                raise KeyError(
-                    f"Could not resolve BlockId/EventSequence columns in {path}. "
-                    f"Available columns: {', '.join(reader.fieldnames)}"
-                )
+                first_field = str(reader.fieldnames[0] if reader.fieldnames else "")
+                if first_field.startswith("blk_") or "Success" in reader.fieldnames:
+                    print(f"  [Parser] No headers found in {path.name}, using positional indexing (0=BlockId, 3=Sequence)")
+                    block_key = 0
+                    sequence_key = 3
+                    is_positional = True
+                    # Process the first row (the one read as fieldnames)
+                    header_row = reader.fieldnames
+                    block_raw = header_row[block_key]
+                    sequence_raw = header_row[sequence_key]
+                    block_id = _normalize_block_id(block_raw)
+                    if block_id:
+                        tokens = self._tokenize_sequence(sequence_raw)
+                        if tokens:
+                            traces[block_id] = tokens
+                else:
+                    raise KeyError(
+                        f"Could not resolve BlockId/EventSequence columns in {path}. "
+                        f"Available columns: {', '.join(reader.fieldnames)}"
+                    )
 
             rows_bar = tqdm(
                 reader,
@@ -181,8 +200,14 @@ class HDFSEventParser:
                 mininterval=0.2,
             )
             for row in rows_bar:
-                block_raw = row.get(block_key, "")
-                sequence_raw = row.get(sequence_key, "")
+                if is_positional:
+                    row_values = list(row.values())
+                    block_raw = row_values[block_key]
+                    sequence_raw = row_values[sequence_key]
+                else:
+                    block_raw = row.get(block_key, "")
+                    sequence_raw = row.get(sequence_key, "")
+
                 block_id = _normalize_block_id(block_raw)
                 if not block_id:
                     continue

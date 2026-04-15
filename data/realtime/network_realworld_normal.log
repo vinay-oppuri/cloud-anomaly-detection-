@@ -1,0 +1,12 @@
+[2026-04-15T09:00:01Z] src=10.10.1.12 dst=10.10.2.40 duration=8450000 fwdpkts=38 bwdpkts=41 fwdbytes=51200 bwdbytes=54000 bytesps=17200 pktsps=92 syn=0 ack=1 rst=0 psh=1
+[2026-04-15T09:00:03Z] src=10.10.1.12 dst=10.10.2.40 duration=9010000 fwdpkts=44 bwdpkts=43 fwdbytes=56800 bwdbytes=55600 bytesps=18800 pktsps=101 syn=0 ack=1 rst=0 psh=1
+[2026-04-15T09:00:05Z] src=10.10.1.15 dst=10.10.2.44 duration=8760000 fwdpkts=40 bwdpkts=39 fwdbytes=53000 bwdbytes=51800 bytesps=17600 pktsps=89 syn=0 ack=1 rst=0 psh=1
+[2026-04-15T09:00:07Z] src=10.10.1.15 dst=10.10.2.44 duration=8920000 fwdpkts=42 bwdpkts=40 fwdbytes=54800 bwdbytes=52500 bytesps=18200 pktsps=96 syn=0 ack=1 rst=0 psh=1
+[2026-04-15T09:00:09Z] src=10.10.1.20 dst=10.10.2.51 duration=9150000 fwdpkts=39 bwdpkts=42 fwdbytes=50500 bwdbytes=53300 bytesps=17100 pktsps=87 syn=0 ack=1 rst=0 psh=1
+[2026-04-15T09:00:11Z] src=10.10.1.20 dst=10.10.2.51 duration=8840000 fwdpkts=41 bwdpkts=40 fwdbytes=53700 bwdbytes=52100 bytesps=17900 pktsps=93 syn=0 ack=1 rst=0 psh=1
+[2026-04-15T09:00:13Z] src=10.10.1.33 dst=10.10.2.60 duration=9030000 fwdpkts=43 bwdpkts=45 fwdbytes=56000 bwdbytes=57200 bytesps=19100 pktsps=103 syn=0 ack=1 rst=0 psh=1
+[2026-04-15T09:00:15Z] src=10.10.1.33 dst=10.10.2.60 duration=8710000 fwdpkts=37 bwdpkts=38 fwdbytes=49800 bwdbytes=50700 bytesps=16600 pktsps=84 syn=0 ack=1 rst=0 psh=1
+[2026-04-15T09:00:17Z] src=10.10.1.44 dst=10.10.2.77 duration=8960000 fwdpkts=45 bwdpkts=44 fwdbytes=57500 bwdbytes=56300 bytesps=19300 pktsps=105 syn=0 ack=1 rst=0 psh=1
+[2026-04-15T09:00:19Z] src=10.10.1.44 dst=10.10.2.77 duration=8890000 fwdpkts=40 bwdpkts=41 fwdbytes=52900 bwdbytes=53900 bytesps=17800 pktsps=91 syn=0 ack=1 rst=0 psh=1
+[2026-04-15T09:00:21Z] src=10.10.1.52 dst=10.10.2.91 duration=9070000 fwdpkts=42 bwdpkts=43 fwdbytes=55100 bwdbytes=56000 bytesps=18600 pktsps=98 syn=0 ack=1 rst=0 psh=1
+[2026-04-15T09:00:23Z] src=10.10.1.52 dst=10.10.2.91 duration=8790000 fwdpkts=39 bwdpkts=40 fwdbytes=51400 bwdbytes=52200 bytesps=17300 pktsps=88 syn=0 ack=1 rst=0 psh=1

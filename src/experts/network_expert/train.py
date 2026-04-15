@@ -48,11 +48,11 @@ CFG = {
 
     # Training
     "batch_size"    : 512,
-    "epochs"        : 40,
+    "epochs"        : 4,
     "lr"            : 1e-3,
     "weight_decay"  : 1e-4,
     "grad_clip"     : 1.0,
-    "patience"      : 8,
+    "patience"      : 2,
     "seed"          : 42,
 }
 
@@ -241,9 +241,9 @@ def best_threshold(y_true, y_probs):
 
 def print_results(y_true, y_probs, thr):
     y_pred = (y_probs >= thr).astype(int)
-    print(f"\n{'═'*55}")
-    print(f"  Network Expert — Test Results (thr={thr:.4f})")
-    print(f"{'═'*55}")
+    print(f"\n{'='*55}")
+    print(f"  Network Expert - Test Results (thr={thr:.4f})")
+    print(f"{'='*55}")
     print(classification_report(y_true, y_pred,
                                 target_names=["Benign", "Anomaly"],
                                 digits=4))
@@ -267,7 +267,7 @@ def save_plot(tr_l, va_f1, path):
     a2.set_title("Val F1"); a2.set_ylim(0, 1); a2.grid(alpha=.3)
     plt.suptitle("Network Expert — CNN-LSTM Binary (CICIDS2018)")
     plt.tight_layout(); plt.savefig(path, dpi=150); plt.close()
-    print(f"Plot → {path}")
+    print(f"Plot -> {path}")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -279,7 +279,7 @@ def main():
     np.random.seed(CFG["seed"])
 
     print("=" * 55)
-    print("  Network Expert — CNN-LSTM Binary Anomaly Detection")
+    print("  Network Expert - CNN-LSTM Binary Anomaly Detection")
     print("  Dataset : CSE-CICIDS2018  (Binary: Benign / Anomaly)")
     print("=" * 55)
     print(f"  Device  : {DEVICE}")
@@ -330,7 +330,7 @@ def main():
 
     # Train
     print(f"Training {CFG['epochs']} epochs (patience={CFG['patience']})...")
-    print("─" * 55)
+    print("-" * 55)
 
     best_f1   = 0.0
     no_improv = 0
@@ -366,7 +366,7 @@ def main():
                 "seq_len"    : seq_len,
                 "cfg"        : CFG,
             }, MODEL_PATH)
-            print(f"    ✓ Saved (f1={vf:.4f})")
+            print(f"    [saved] f1={vf:.4f}")
         else:
             no_improv += 1
             if no_improv >= CFG["patience"]:
@@ -402,8 +402,8 @@ def main():
             "dataset"    : "CSE-CICIDS2018 (binary)",
         }, f, indent=2)
 
-    print(f"\n✓ Model → {MODEL_PATH}")
-    print(f"✓ Meta  → {META_PATH}")
+    print(f"\nModel -> {MODEL_PATH}")
+    print(f"Meta  -> {META_PATH}")
 
 
 if __name__ == "__main__":
