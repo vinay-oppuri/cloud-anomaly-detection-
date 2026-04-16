@@ -23,7 +23,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.preprocessing import RobustScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 import joblib
 from tqdm.auto import tqdm
@@ -34,7 +34,7 @@ warnings.filterwarnings("ignore")
 RAW_DIR  = "data/raw/cicids2018"
 OUT_DIR  = "data/processed"
 SEED     = 42
-SEQ_LEN  = 10   # consecutive flows per sequence
+SEQ_LEN  = 20   # consecutive flows per sequence
 CLEAN_DEDUP_CHUNK_ROWS = int(os.environ.get("CICIDS_CLEAN_DEDUP_CHUNK_ROWS", "250000"))
 LOAD_CHUNK_ROWS = int(os.environ.get("CICIDS_LOAD_CHUNK_ROWS", "250000"))
 MAX_ROWS = int(os.environ.get("CICIDS_MAX_ROWS", "0"))  # 0 = no cap
@@ -268,7 +268,7 @@ def clean(df):
 
 
 def scale(df):
-    print("[Scale] Applying RobustScaler...")
+    print("[Scale] Applying StandardScaler...")
     feat_df = df.drop(columns=["label_bin"], errors="ignore").copy()
 
     # Coerce any unexpected string/object columns to numeric.
@@ -288,9 +288,9 @@ def scale(df):
     X = feat_df.to_numpy(dtype=np.float32, copy=False)
     y = df["label_bin"].values.astype(np.int64)
 
-    scaler = RobustScaler()
+    scaler = StandardScaler()
     X = scaler.fit_transform(X)
-    X = np.clip(X, -10, 10)   # clip extreme outliers
+    X = np.clip(X, -5, 5)   # clip extreme outliers gracefully for transformer LayerNorm
     print(f"  X shape: {X.shape}")
     return X, y, feat_cols, scaler
 
