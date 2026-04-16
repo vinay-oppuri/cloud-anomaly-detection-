@@ -24,7 +24,7 @@ from sklearn.metrics import (
 )
 
 from src.experts.network_expert.classifier import classify_network_anomaly, summarize_network_rows
-from src.experts.network_expert.model import CNNLSTMClassifier
+from src.experts.network_expert.model import CNNTransformerClassifier
 from src.interpreter.advisor import IncidentAdvisor
 
 DEFAULT_MODEL_PATH = Path("models/network_expert.pth")
@@ -626,16 +626,16 @@ def _load_runtime_assets(
             raise ValueError(f"Expected binary class names in checkpoint, got {class_names}.")
 
         input_dim = int(ckpt_cfg.get("input_dim", len(feature_cols)))
-        model = CNNLSTMClassifier(
+        model = CNNTransformerClassifier(
             input_dim=input_dim,
-            num_classes=int(ckpt_cfg.get("num_classes", 2)),
-            conv_channels=int(ckpt_cfg.get("conv_channels", 96)),
+            num_classes=int(ckpt_cfg.get("num_classes", 1)),
+            conv_channels=int(ckpt_cfg.get("conv_channels", 128)),
             conv_kernel_size=int(ckpt_cfg.get("conv_kernel_size", 3)),
             flow_embedding_dim=int(ckpt_cfg.get("flow_embedding_dim", 128)),
-            lstm_hidden_dim=int(ckpt_cfg.get("lstm_hidden_dim", 128)),
-            lstm_layers=int(ckpt_cfg.get("lstm_layers", 2)),
+            transformer_heads=int(ckpt_cfg.get("transformer_heads", 4)),
+            transformer_layers=int(ckpt_cfg.get("transformer_layers", 2)),
+            dim_feedforward=int(ckpt_cfg.get("dim_feedforward", 256)),
             dropout=float(ckpt_cfg.get("dropout", 0.3)),
-            bidirectional=bool(ckpt_cfg.get("bidirectional", False)),
         )
         model.load_state_dict(checkpoint["state_dict"], strict=False)
     elif "model_state" in checkpoint:

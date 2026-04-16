@@ -1,29 +1,30 @@
 {
   "n_features": 76,
-  "seq_len": 10,
-  "threshold": 0.414473295211792,
+  "seq_len": 20,
+  "threshold": 0.7558060884475708,
   "cfg": {
-    "cnn_channels": 128,
-    "cnn_kernel": 3,
-    "lstm_hidden": 256,
-    "lstm_layers": 2,
-    "fc_hidden": 128,
+    "conv_channels": 128,
+    "conv_kernel_size": 3,
+    "flow_embedding_dim": 128,
+    "transformer_heads": 4,
+    "transformer_layers": 2,
+    "dim_feedforward": 256,
     "dropout": 0.3,
     "batch_size": 512,
-    "epochs": 40,
+    "epochs": 10,
     "lr": 0.001,
     "weight_decay": 0.0001,
     "grad_clip": 1.0,
-    "patience": 8,
+    "patience": 4,
     "seed": 42
   },
   "test": {
-    "f1": 0.9993227990970655,
-    "auc": 0.9999997906676156,
-    "threshold": 0.414473295211792,
-    "tp": 4427,
-    "fp": 4,
-    "fn": 2
+    "f1": 0.9667603836414029,
+    "auc": 0.9975596260926851,
+    "threshold": 0.7558060884475708,
+    "tp": 24242,
+    "fp": 395,
+    "fn": 1272
   },
   "dataset": "CSE-CICIDS2018 (binary)"
 }

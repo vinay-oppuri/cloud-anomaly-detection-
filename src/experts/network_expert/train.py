@@ -29,6 +29,8 @@ from sklearn.metrics import (f1_score, roc_auc_score,
                               confusion_matrix,
                               precision_recall_curve)
 
+from src.experts.network_expert.model import CNNTransformerClassifier
+
 # ── Paths ──────────────────────────────────────────────────────────
 PRE_DIR    = "data/processed"
 MODEL_DIR  = "models"
@@ -39,20 +41,21 @@ PLOT_PATH  = "models/network_curves.png"
 # ── Config ─────────────────────────────────────────────────────────
 CFG = {
     # Model
-    "cnn_channels"  : 128,
-    "cnn_kernel"    : 3,
-    "lstm_hidden"   : 256,
-    "lstm_layers"   : 2,
-    "fc_hidden"     : 128,
-    "dropout"       : 0.3,
+    "conv_channels"       : 128,
+    "conv_kernel_size"    : 3,
+    "flow_embedding_dim"  : 128,
+    "transformer_heads"   : 4,
+    "transformer_layers"  : 2,
+    "dim_feedforward"     : 256,
+    "dropout"             : 0.3,
 
     # Training
     "batch_size"    : 512,
-    "epochs"        : 4,
+    "epochs"        : 10,
     "lr"            : 1e-3,
     "weight_decay"  : 1e-4,
     "grad_clip"     : 1.0,
-    "patience"      : 2,
+    "patience"      : 4,
     "seed"          : 42,
 }
 
@@ -116,87 +119,10 @@ def make_loaders(train_X, train_y, val_X, val_y, test_X, test_y):
 
 
 # ══════════════════════════════════════════════════════════════════
-#  MODEL: CNN-LSTM (binary)
+#  MODEL: CNN-Transformer (binary)
 # ══════════════════════════════════════════════════════════════════
-
-class CNN_LSTM_Binary(nn.Module):
-    """
-    CNN-LSTM for binary anomaly detection.
-
-    Input : (batch, seq_len, n_features)
-    Output: (batch,) — raw logit, apply sigmoid for probability
-
-    CNN:  extracts spatial correlations between the 80 flow features
-          e.g. (bytes/s + packet_count + duration) together = DDoS signature
-    LSTM: captures how the flow pattern evolves across seq_len timesteps
-          e.g. escalating packet rate over 10 consecutive flows = attack
-    """
-
-    def __init__(self, n_features, cnn_channels=128, cnn_kernel=3,
-                 lstm_hidden=256, lstm_layers=2,
-                 fc_hidden=128, dropout=0.3):
-        super().__init__()
-
-        # 1D CNN block
-        # Conv1d input: (batch, n_features, seq_len)  — features as channels
-        self.cnn = nn.Sequential(
-            nn.Conv1d(n_features, cnn_channels,
-                      kernel_size=cnn_kernel,
-                      padding=cnn_kernel // 2),
-            nn.BatchNorm1d(cnn_channels),
-            nn.GELU(),
-            nn.Dropout(dropout),
-
-            nn.Conv1d(cnn_channels, cnn_channels,
-                      kernel_size=cnn_kernel,
-                      padding=cnn_kernel // 2),
-            nn.BatchNorm1d(cnn_channels),
-            nn.GELU(),
-            nn.Dropout(dropout),
-        )
-
-        # LSTM block
-        self.lstm = nn.LSTM(
-            input_size   = cnn_channels,
-            hidden_size  = lstm_hidden,
-            num_layers   = lstm_layers,
-            dropout      = dropout if lstm_layers > 1 else 0.0,
-            batch_first  = True,
-        )
-
-        # Binary classifier head — outputs single logit
-        self.head = nn.Sequential(
-            nn.LayerNorm(lstm_hidden),
-            nn.Linear(lstm_hidden, fc_hidden),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(fc_hidden, 1),
-        )
-
-        # Weight init
-        for name, p in self.named_parameters():
-            if "weight_ih" in name:
-                nn.init.xavier_uniform_(p)
-            elif "weight_hh" in name:
-                nn.init.orthogonal_(p)
-            elif "bias" in name:
-                nn.init.zeros_(p)
-            elif "weight" in name and p.dim() > 1:
-                nn.init.xavier_uniform_(p)
-
-    def forward(self, x):
-        # x: (B, seq_len, n_features)
-
-        # CNN expects (B, n_features, seq_len)
-        x = x.permute(0, 2, 1)   # → (B, F, L)
-        x = self.cnn(x)           # → (B, C, L)
-        x = x.permute(0, 2, 1)   # → (B, L, C)
-
-        # LSTM — take final hidden state
-        _, (h_n, _) = self.lstm(x)
-        h = h_n[-1]               # (B, lstm_hidden)
-
-        return self.head(h).squeeze(1)   # (B,) raw logit
+# We now use the CNNTransformerClassifier imported from model.py
+# and we squeeze the final dimension (-1) since num_classes=1.
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -208,7 +134,7 @@ def train_epoch(model, loader, optimizer, scheduler, criterion):
     total, n = 0.0, 0
     for X, y in loader:
         X, y   = X.to(DEVICE, non_blocking=True), y.to(DEVICE, non_blocking=True)
-        loss   = criterion(model(X), y)
+        loss   = criterion(model(X).squeeze(-1), y)
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), CFG["grad_clip"])
@@ -224,7 +150,7 @@ def evaluate(model, loader):
     yl, yp = [], []
     for X, y in loader:
         X      = X.to(DEVICE, non_blocking=True)
-        logits = model(X)
+        logits = model(X).squeeze(-1)
         probs  = torch.sigmoid(logits).cpu().numpy()
         yl.extend(y.numpy())
         yp.extend(probs)
@@ -299,14 +225,16 @@ def main():
         train_X, train_y, val_X, val_y, test_X, test_y)
 
     # Model
-    model = CNN_LSTM_Binary(
-        n_features  = n_features,
-        cnn_channels = CFG["cnn_channels"],
-        cnn_kernel   = CFG["cnn_kernel"],
-        lstm_hidden  = CFG["lstm_hidden"],
-        lstm_layers  = CFG["lstm_layers"],
-        fc_hidden    = CFG["fc_hidden"],
-        dropout      = CFG["dropout"],
+    model = CNNTransformerClassifier(
+        input_dim           = n_features,
+        num_classes         = 1,
+        conv_channels       = CFG["conv_channels"],
+        conv_kernel_size    = CFG["conv_kernel_size"],
+        flow_embedding_dim  = CFG["flow_embedding_dim"],
+        transformer_heads   = CFG["transformer_heads"],
+        transformer_layers  = CFG["transformer_layers"],
+        dim_feedforward     = CFG["dim_feedforward"],
+        dropout             = CFG["dropout"],
     ).to(DEVICE)
 
     total_p = sum(p.numel() for p in model.parameters())
@@ -360,11 +288,11 @@ def main():
             best_f1   = vf
             no_improv = 0
             torch.save({
-                "model_state": model.state_dict(),
+                "state_dict" : model.state_dict(),
                 "epoch"      : epoch,
                 "n_features" : n_features,
                 "seq_len"    : seq_len,
-                "cfg"        : CFG,
+                "config"     : CFG,
             }, MODEL_PATH)
             print(f"    [saved] f1={vf:.4f}")
         else:
@@ -375,9 +303,8 @@ def main():
 
     print(f"\nDone in {(time.time()-t0)/60:.1f} min | Best F1={best_f1:.4f}")
 
-    # Threshold + final eval
     ckpt = torch.load(MODEL_PATH, map_location=DEVICE, weights_only=False)
-    model.load_state_dict(ckpt["model_state"])
+    model.load_state_dict(ckpt["state_dict"])
 
     vy, vp = evaluate(model, va_l)
     thr    = best_threshold(vy, vp)

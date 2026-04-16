@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import warnings
 from pathlib import Path
 from typing import Any, Sequence
@@ -11,8 +12,29 @@ from src.experts.base_expert import BaseExpert, ExpertPrediction
 from src.experts.network_expert.constants import CANONICAL_CICIDS_15_CLASSES
 
 
-class CNNLSTMClassifier(nn.Module):
-    """Per-flow feature CNN + temporal LSTM classifier for CICIDS windows."""
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(1, max_len, d_model)
+        pe[0, :, 0::2] = torch.sin(position * div_term)
+        pe[0, :, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Arguments:
+            x: Tensor, shape ``[batch_size, seq_len, embedding_dim]``
+        """
+        x = x + self.pe[:, :x.size(1), :]
+        return self.dropout(x)
+
+
+class CNNTransformerClassifier(nn.Module):
+    """Per-flow feature CNN + temporal Transformer classifier for CICIDS windows."""
 
     def __init__(
         self,
@@ -21,26 +43,26 @@ class CNNLSTMClassifier(nn.Module):
         conv_channels: int = 96,
         conv_kernel_size: int = 3,
         flow_embedding_dim: int = 128,
-        lstm_hidden_dim: int = 128,
-        lstm_layers: int = 2,
+        transformer_heads: int = 4,
+        transformer_layers: int = 2,
+        dim_feedforward: int = 256,
         dropout: float = 0.3,
-        bidirectional: bool = False,
     ) -> None:
         super().__init__()
         if input_dim <= 0:
             raise ValueError("input_dim must be positive.")
-        if num_classes <= 1:
-            raise ValueError("num_classes must be >= 2.")
+        if num_classes < 1:
+            raise ValueError("num_classes must be >= 1.")
         if conv_channels <= 0:
             raise ValueError("conv_channels must be positive.")
         if conv_kernel_size <= 0:
             raise ValueError("conv_kernel_size must be positive.")
         if flow_embedding_dim <= 0:
             raise ValueError("flow_embedding_dim must be positive.")
-        if lstm_hidden_dim <= 0:
-            raise ValueError("lstm_hidden_dim must be positive.")
-        if lstm_layers <= 0:
-            raise ValueError("lstm_layers must be positive.")
+        if flow_embedding_dim % transformer_heads != 0:
+            raise ValueError("flow_embedding_dim must be divisible by transformer_heads.")
+        if transformer_layers <= 0:
+            raise ValueError("transformer_layers must be positive.")
 
         padding = conv_kernel_size // 2
         self.input_dim = input_dim
@@ -55,18 +77,21 @@ class CNNLSTMClassifier(nn.Module):
             nn.AdaptiveAvgPool1d(1),
         )
         self.flow_projection = nn.Linear(conv_channels, flow_embedding_dim)
-        self.temporal_lstm = nn.LSTM(
-            input_size=flow_embedding_dim,
-            hidden_size=lstm_hidden_dim,
-            num_layers=lstm_layers,
-            batch_first=True,
-            dropout=dropout if lstm_layers > 1 else 0.0,
-            bidirectional=bidirectional,
+        
+        self.pos_encoder = PositionalEncoding(flow_embedding_dim, dropout)
+        
+        encoder_layers = nn.TransformerEncoderLayer(
+            d_model=flow_embedding_dim,
+            nhead=transformer_heads,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            batch_first=True
         )
-        lstm_output_dim = lstm_hidden_dim * (2 if bidirectional else 1)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers=transformer_layers)
+        
         self.classifier = nn.Sequential(
             nn.Dropout(dropout),
-            nn.Linear(lstm_output_dim, num_classes),
+            nn.Linear(flow_embedding_dim, num_classes),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -85,8 +110,11 @@ class CNNLSTMClassifier(nn.Module):
         flow_features = self.feature_cnn(flow_vectors).squeeze(-1)
         flow_embeddings = self.flow_projection(flow_features).reshape(batch_size, seq_len, -1)
 
+        # Apply positional encoding
+        flow_embeddings = self.pos_encoder(flow_embeddings)
+        
         # Model temporal evolution across consecutive flow embeddings.
-        temporal_outputs, _ = self.temporal_lstm(flow_embeddings)
+        temporal_outputs = self.transformer_encoder(flow_embeddings)
         sequence_repr = temporal_outputs[:, -1, :]
         logits = self.classifier(sequence_repr)
         return logits
@@ -123,22 +151,22 @@ class NetworkExpert(BaseExpert):
         resolved_conv_channels = int(checkpoint_config.get("conv_channels", 96))
         resolved_conv_kernel_size = int(checkpoint_config.get("conv_kernel_size", 3))
         resolved_flow_embedding_dim = int(checkpoint_config.get("flow_embedding_dim", 128))
-        resolved_lstm_hidden_dim = int(checkpoint_config.get("lstm_hidden_dim", 128))
-        resolved_lstm_layers = int(checkpoint_config.get("lstm_layers", 2))
+        resolved_transformer_heads = int(checkpoint_config.get("transformer_heads", 4))
+        resolved_transformer_layers = int(checkpoint_config.get("transformer_layers", 2))
+        resolved_dim_feedforward = int(checkpoint_config.get("dim_feedforward", 256))
         resolved_dropout = float(checkpoint_config.get("dropout", 0.3))
-        resolved_bidirectional = _to_bool(checkpoint_config.get("bidirectional", False))
 
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        self.model = CNNLSTMClassifier(
+        self.model = CNNTransformerClassifier(
             input_dim=resolved_input_dim,
             num_classes=resolved_num_classes,
             conv_channels=resolved_conv_channels,
             conv_kernel_size=resolved_conv_kernel_size,
             flow_embedding_dim=resolved_flow_embedding_dim,
-            lstm_hidden_dim=resolved_lstm_hidden_dim,
-            lstm_layers=resolved_lstm_layers,
+            transformer_heads=resolved_transformer_heads,
+            transformer_layers=resolved_transformer_layers,
+            dim_feedforward=resolved_dim_feedforward,
             dropout=resolved_dropout,
-            bidirectional=resolved_bidirectional,
         ).to(self.device)
 
         if model_path_obj is not None:
@@ -269,5 +297,5 @@ def _to_bool(value: object) -> bool:
     return bool(value)
 
 
-__all__ = ["CNNLSTMClassifier", "NetworkExpert"]
+__all__ = ["CNNTransformerClassifier", "NetworkExpert"]
 
