@@ -51,11 +51,11 @@ CFG = {
 
     # Training
     "batch_size"    : 512,
-    "epochs"        : 4,
+    "epochs"        : 10,
     "lr"            : 1e-3,
     "weight_decay"  : 1e-4,
     "grad_clip"     : 1.0,
-    "patience"      : 2,
+    "patience"      : 4,
     "seed"          : 42,
 }
 
