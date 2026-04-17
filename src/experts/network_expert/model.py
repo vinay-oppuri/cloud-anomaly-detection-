@@ -298,4 +298,3 @@ def _to_bool(value: object) -> bool:
 
 
 __all__ = ["CNNTransformerClassifier", "NetworkExpert"]
-

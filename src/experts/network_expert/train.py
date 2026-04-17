@@ -1,17 +1,3 @@
-"""
-train.py
-========
-CNN-LSTM for binary network anomaly detection on CICIDS2018.
-  Output: 0 = Benign, 1 = Anomaly
-
-Input  : data/processed/  (from process.py)
-Output : models/network_expert.pth
-         models/network_meta.json
-
-Run:
-  uv run train_cicids
-"""
-
 import os
 import json
 import time
@@ -116,13 +102,6 @@ def make_loaders(train_X, train_y, val_X, val_y, test_X, test_y):
     te = DataLoader(FlowDataset(test_X, test_y),
                     batch_size=CFG["batch_size"], shuffle=False, **kw)
     return tr, va, te
-
-
-# ══════════════════════════════════════════════════════════════════
-#  MODEL: CNN-Transformer (binary)
-# ══════════════════════════════════════════════════════════════════
-# We now use the CNNTransformerClassifier imported from model.py
-# and we squeeze the final dimension (-1) since num_classes=1.
 
 
 # ══════════════════════════════════════════════════════════════════

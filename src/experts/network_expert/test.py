@@ -639,8 +639,27 @@ def _load_runtime_assets(
         )
         model.load_state_dict(checkpoint["state_dict"], strict=False)
     elif "model_state" in checkpoint:
-        # Legacy checkpoint from train.py (single-logit binary head).
-        from src.experts.network_expert.train import CNN_LSTM_Binary
+        class CNN_LSTM_Binary(torch.nn.Module):
+            def __init__(self, n_features, cnn_channels=128, cnn_kernel=3,
+                         lstm_hidden=256, lstm_layers=2, fc_hidden=128, dropout=0.3):
+                super().__init__()
+                self.cnn = torch.nn.Sequential(
+                    torch.nn.Conv1d(n_features, cnn_channels, cnn_kernel, padding=cnn_kernel // 2),
+                    torch.nn.ReLU(),
+                    torch.nn.Dropout(dropout),
+                )
+                self.lstm = torch.nn.LSTM(cnn_channels, lstm_hidden, lstm_layers,
+                                          batch_first=True, dropout=dropout if lstm_layers > 1 else 0)
+                self.fc = torch.nn.Sequential(
+                    torch.nn.Linear(lstm_hidden, fc_hidden),
+                    torch.nn.ReLU(),
+                    torch.nn.Dropout(dropout),
+                    torch.nn.Linear(fc_hidden, 1),
+                )
+            def forward(self, x):
+                x = self.cnn(x.permute(0, 2, 1)).permute(0, 2, 1)
+                out, _ = self.lstm(x)
+                return self.fc(out[:, -1])
 
         legacy_cfg = checkpoint.get("cfg", {})
         input_dim = int(checkpoint.get("n_features", len(feature_cols)))
