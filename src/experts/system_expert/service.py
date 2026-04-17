@@ -7,16 +7,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
+import numpy as np
 import torch
-from torch import nn
+import torch.nn as nn
+from sklearn.metrics import f1_score
+from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
 from src.experts.system_expert.classifier import classify_anomaly
 from src.experts.system_expert.model import SystemExpertTransformer
 from src.interpreter.advisor import IncidentAdvisor
-from src.training.data import SequenceDataset
-from src.training.metrics import compute_classification_report
-from src.training.runner import build_dataloader, evaluate_model
 
 DEFAULT_PROCESSED_PATH = Path("data/processed/hdfs_processed.pt")
 DEFAULT_CACHE_PATH = Path("data/processed/hdfs_cache.json")
@@ -156,31 +156,30 @@ class SystemAnomalyService:
         if split_X.ndim != 2:
             raise ValueError(f"Expected split tokens [N, seq_len], got {tuple(split_X.shape)}")
 
-        loader = build_dataloader(
-            SequenceDataset(split_X, split_y),
-            batch_size=batch_size,
-            shuffle=False,
-        )
-        criterion = nn.CrossEntropyLoss()
-        loss, logits, labels = evaluate_model(
-            self.expert.model,
-            loader,
-            criterion,
-            device=self.device,
-            input_dtype="long",
-            progress_desc=split,
-        )
-        class_names = self.class_names
-        if logits.ndim == 2 and logits.shape[1] != len(class_names):
-            class_names = [f"class_{idx}" for idx in range(int(logits.shape[1]))]
+        class _DS(Dataset):
+            def __init__(self, X, y): self.X, self.y = X, y
+            def __len__(self): return len(self.X)
+            def __getitem__(self, i): return self.X[i], self.y[i]
 
-        report = compute_classification_report(
-            loss=loss,
-            labels=labels,
-            logits=logits,
-            class_names=class_names,
-            normal_class_index=self.config.normal_class_index,
-        )
+        loader = DataLoader(_DS(split_X, split_y), batch_size=batch_size, shuffle=False)
+        criterion = nn.CrossEntropyLoss()
+
+        self.expert.model.eval()
+        total_loss, all_preds, all_labels = 0.0, [], []
+        with torch.no_grad():
+            for X, y in loader:
+                X, y = X.to(self.device), y.to(self.device)
+                logits = self.expert.model(X)
+                total_loss += criterion(logits, y).item() * len(y)
+                all_preds.extend(logits.argmax(dim=1).cpu().numpy())
+                all_labels.extend(y.cpu().numpy())
+
+        n = len(all_labels)
+        avg_loss = total_loss / max(n, 1)
+        preds = np.array(all_preds)
+        labels = np.array(all_labels)
+        macro_f1 = float(f1_score(labels, preds, average="macro", zero_division=0))
+
         return {
             "task": "test_hdfs_system_expert",
             "mode": "evaluate",
@@ -188,8 +187,11 @@ class SystemAnomalyService:
             "processed_data": str(self.processed_data_path),
             "model_path": str(self.model_path),
             "device": str(self.device),
-            "num_samples": int(labels.shape[0]),
-            "metrics": report.to_dict(),
+            "num_samples": n,
+            "metrics": {
+                "loss": avg_loss,
+                "macro_f1": macro_f1,
+            },
             "config": {
                 "batch_size": batch_size,
                 "normal_class_index": self.config.normal_class_index,
