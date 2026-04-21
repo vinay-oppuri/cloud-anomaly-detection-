@@ -1,6 +1,14 @@
 ## Cloud Anomaly Detection
 
-This repo is organized into two expert pipelines with the same structure:
+Primary source code is organized under `src/`:
+
+- `src/experts/network_expert/` for network anomaly detection
+- `src/experts/system_expert/` for system anomaly detection
+- `src/correlation/` for cross-layer correlation
+- `src/api/` for FastAPI entry points
+- `src/validation/` for end-to-end model checks
+
+The expert pipelines follow the same structure:
 
 - `parser.py` for preprocessing
 - `train.py` for model training
@@ -42,7 +50,6 @@ Code path:
 - `src/experts/network_expert/parser.py`
 - `src/experts/network_expert/train.py`
 - `src/experts/network_expert/test.py`
-- training engine in `src/training/cicids_preprocess.py` and `src/training/cicids_binary_training.py`
 
 Commands:
 
@@ -58,6 +65,30 @@ Binary aliases are also available:
 uv run preprocess_cicids_binary
 uv run train_cicids_binary
 uv run test_cicids_binary --log-file data/uploads/raw_network_anomaly_long.log --device cuda
+```
+
+## Cross-Layer Correlation
+
+Code path:
+
+- `src/correlation/train.py`
+- `src/correlation/pipeline.py`
+- `src/correlation/realworld.py`
+
+Commands:
+
+```bash
+uv run train_correlation
+uv run run_correlation --split test --device cpu
+uv run serve_cross_layer_api
+```
+
+## Validation
+
+Run the end-to-end expert checks:
+
+```bash
+uv run run_model_tests
 ```
 
 ## API

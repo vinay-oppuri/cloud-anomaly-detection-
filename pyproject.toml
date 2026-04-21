@@ -9,6 +9,7 @@ dependencies = [
     "google-genai>=1.13.0",
     "joblib>=1.5.3",
     "matplotlib>=3.10.8",
+    "networkx>=3.4.2",
     "numpy>=2.3.0",
     "pandas>=3.0.2",
     "python-multipart>=0.0.20",
@@ -28,8 +29,12 @@ train_cicids_binary = "src.experts.network_expert.train:main"
 test_hdfs = "src.experts.system_expert.test:main"
 serve_system_api = "src.api.system_api:main"
 serve_network_api = "src.api.network_api:main"
+serve_cross_layer_api = "src.api.cross_layer_api:main"
 test_cicids = "src.experts.network_expert.test:main"
 test_cicids_binary = "src.experts.network_expert.test:main"
+train_correlation = "src.correlation.train:main"
+run_correlation = "src.correlation.pipeline:main"
+run_model_tests = "src.validation.model_checks:main"
 
 [build-system]
 requires = ["hatchling>=1.26.0"]

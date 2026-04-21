@@ -1,0 +1,243 @@
+{
+  "summary": {
+    "num_network_events": 534,
+    "num_log_events": 2525,
+    "num_nodes": 3059,
+    "num_edges": 4565,
+    "num_clusters": 548
+  },
+  "metrics": {
+    "temporal_alignment_score": 0.864554,
+    "graph_connectivity": 0.973535,
+    "chain_completeness": 0.988595
+  },
+  "case_studies": [
+    {
+      "cluster_id": "cluster-419",
+      "root_cause_id": "network-00407",
+      "title": "DDoS cross-layer anomaly chain",
+      "root_cause": "DDoS",
+      "explanation": "DDoS likely preceded Cascading_Failure, Cascading_Failure, Cascading_Failure, forming a cross-layer attack path from network abuse into HDFS-side failures.",
+      "node_count": 71,
+      "attack_chain_head": [
+        {
+          "event_id": "network-00407",
+          "timestamp": "2018-02-21T02:29:48",
+          "type": "network",
+          "label": "DDoS",
+          "anomaly_score": 0.999999,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-02456",
+          "timestamp": "2018-02-21T02:30:28",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.99987,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-02281",
+          "timestamp": "2018-02-21T02:30:39",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.999982,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-02011",
+          "timestamp": "2018-02-21T02:30:39",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.999118,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-00139",
+          "timestamp": "2018-02-21T02:30:46",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.999874,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-00619",
+          "timestamp": "2018-02-21T02:30:50",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.99999,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-00152",
+          "timestamp": "2018-02-21T02:30:58",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.999162,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-02214",
+          "timestamp": "2018-02-21T02:31:03",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.999973,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-00406",
+          "timestamp": "2018-02-21T02:31:08",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.99999,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-02240",
+          "timestamp": "2018-02-21T02:31:14",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.99999,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-00650",
+          "timestamp": "2018-02-21T02:31:23",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.997274,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-02388",
+          "timestamp": "2018-02-21T02:31:29",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.973938,
+          "severity": "Critical"
+        }
+      ],
+      "mitigation": [
+        "Enable rate limiting or upstream scrubbing on the affected service edge.",
+        "Block top offending sources and tighten exposure on public-facing ports.",
+        "Monitor backend saturation and autoscaling signals for spillover impact.",
+        "Escalate immediately and review cluster-wide health to stop ongoing propagation.",
+        "Stabilize networking and storage dependencies before replaying failed workloads."
+      ]
+    },
+    {
+      "cluster_id": "cluster-016",
+      "root_cause_id": "network-00015",
+      "title": "DoS cross-layer anomaly chain",
+      "root_cause": "DoS",
+      "explanation": "DoS likely preceded Cascading_Failure, Cascading_Failure, Cascading_Failure, forming a cross-layer attack path from network abuse into HDFS-side failures.",
+      "node_count": 46,
+      "attack_chain_head": [
+        {
+          "event_id": "network-00015",
+          "timestamp": "2018-02-16T01:48:16",
+          "type": "network",
+          "label": "DoS",
+          "anomaly_score": 1.0,
+          "severity": "High"
+        },
+        {
+          "event_id": "log-00182",
+          "timestamp": "2018-02-16T01:49:09",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.999992,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-01544",
+          "timestamp": "2018-02-16T01:49:22",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.999879,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-01129",
+          "timestamp": "2018-02-16T01:49:27",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.999992,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-01043",
+          "timestamp": "2018-02-16T01:49:29",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.99987,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-00794",
+          "timestamp": "2018-02-16T01:49:41",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.999716,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-00062",
+          "timestamp": "2018-02-16T01:49:49",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.99776,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-02228",
+          "timestamp": "2018-02-16T01:49:57",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.999992,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-02154",
+          "timestamp": "2018-02-16T01:49:58",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.999121,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-02125",
+          "timestamp": "2018-02-16T01:50:03",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.999992,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-01315",
+          "timestamp": "2018-02-16T01:50:04",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.999124,
+          "severity": "Critical"
+        },
+        {
+          "event_id": "log-00803",
+          "timestamp": "2018-02-16T01:50:18",
+          "type": "log",
+          "label": "Cascading_Failure",
+          "anomaly_score": 0.999861,
+          "severity": "Critical"
+        }
+      ],
+      "mitigation": [
+        "Throttle repeated abusive flows and protect the targeted application endpoint.",
+        "Inspect service-side resource contention and recover unhealthy instances.",
+        "Escalate immediately and review cluster-wide health to stop ongoing propagation.",
+        "Stabilize networking and storage dependencies before replaying failed workloads.",
+        "Trigger block verification and force replication from known-good replicas.",
+        "Freeze suspect downstream consumers until integrity checks complete."
+      ]
+    }
+  ]
+}

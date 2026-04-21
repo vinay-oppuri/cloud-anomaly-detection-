@@ -9,11 +9,11 @@ import torch
 from torch import nn
 
 from src.experts.base_expert import BaseExpert, ExpertPrediction
-from src.experts.network_expert.constants import CANONICAL_CICIDS_15_CLASSES
+from src.experts.network_expert.constants import ATTACK_FAMILY_CLASSES
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000) -> None:
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
 
@@ -22,51 +22,55 @@ class PositionalEncoding(nn.Module):
         pe = torch.zeros(1, max_len, d_model)
         pe[0, :, 0::2] = torch.sin(position * div_term)
         pe[0, :, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
+        self.register_buffer("pe", pe, persistent=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Arguments:
-            x: Tensor, shape ``[batch_size, seq_len, embedding_dim]``
-        """
-        x = x + self.pe[:, :x.size(1), :]
+        if x.ndim != 3:
+            raise ValueError("Expected [batch, seq_len, embedding_dim] tensor for positional encoding.")
+        x = x + self.pe[:, : x.size(1), :]
         return self.dropout(x)
 
 
+class AttentionPooling(nn.Module):
+    def __init__(self, hidden_dim: int) -> None:
+        super().__init__()
+        self.score = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, 1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        weights = torch.softmax(self.score(x).squeeze(-1), dim=1)
+        return torch.bmm(weights.unsqueeze(1), x).squeeze(1)
+
+
 class CNNTransformerClassifier(nn.Module):
-    """Per-flow feature CNN + temporal Transformer classifier for CICIDS windows."""
+    """CNN projection over per-flow features followed by a temporal transformer encoder."""
 
     def __init__(
         self,
         input_dim: int,
         num_classes: int,
-        conv_channels: int = 96,
+        conv_channels: int = 128,
         conv_kernel_size: int = 3,
         flow_embedding_dim: int = 128,
         transformer_heads: int = 4,
-        transformer_layers: int = 2,
+        transformer_layers: int = 3,
         dim_feedforward: int = 256,
-        dropout: float = 0.3,
+        dropout: float = 0.2,
     ) -> None:
         super().__init__()
         if input_dim <= 0:
             raise ValueError("input_dim must be positive.")
-        if num_classes < 1:
-            raise ValueError("num_classes must be >= 1.")
-        if conv_channels <= 0:
-            raise ValueError("conv_channels must be positive.")
-        if conv_kernel_size <= 0:
-            raise ValueError("conv_kernel_size must be positive.")
-        if flow_embedding_dim <= 0:
-            raise ValueError("flow_embedding_dim must be positive.")
+        if num_classes < 2:
+            raise ValueError("num_classes must be >= 2.")
         if flow_embedding_dim % transformer_heads != 0:
             raise ValueError("flow_embedding_dim must be divisible by transformer_heads.")
-        if transformer_layers <= 0:
-            raise ValueError("transformer_layers must be positive.")
 
         padding = conv_kernel_size // 2
         self.input_dim = input_dim
-        self.feature_cnn = nn.Sequential(
+        self.feature_encoder = nn.Sequential(
             nn.Conv1d(1, conv_channels, kernel_size=conv_kernel_size, padding=padding),
             nn.BatchNorm1d(conv_channels),
             nn.GELU(),
@@ -76,25 +80,34 @@ class CNNTransformerClassifier(nn.Module):
             nn.Dropout(dropout),
             nn.AdaptiveAvgPool1d(1),
         )
-        self.flow_projection = nn.Linear(conv_channels, flow_embedding_dim)
-        
-        self.pos_encoder = PositionalEncoding(flow_embedding_dim, dropout)
-        
-        encoder_layers = nn.TransformerEncoderLayer(
+        self.flow_projection = nn.Sequential(
+            nn.Linear(conv_channels, flow_embedding_dim),
+            nn.LayerNorm(flow_embedding_dim),
+            nn.GELU(),
+        )
+        self.positional_encoding = PositionalEncoding(flow_embedding_dim, dropout=dropout)
+        encoder_layer = nn.TransformerEncoderLayer(
             d_model=flow_embedding_dim,
             nhead=transformer_heads,
             dim_feedforward=dim_feedforward,
             dropout=dropout,
-            batch_first=True
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
         )
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers=transformer_layers)
-        
+        self.temporal_encoder = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=transformer_layers,
+            enable_nested_tensor=False,
+        )
+        self.pool = AttentionPooling(flow_embedding_dim)
         self.classifier = nn.Sequential(
+            nn.LayerNorm(flow_embedding_dim),
             nn.Dropout(dropout),
             nn.Linear(flow_embedding_dim, num_classes),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
         if x.ndim != 3:
             raise ValueError("Network model expects input with shape [batch, seq_len, features].")
 
@@ -102,22 +115,18 @@ class CNNTransformerClassifier(nn.Module):
         if feature_dim != self.input_dim:
             raise ValueError(
                 f"Expected {self.input_dim} features per flow, got {feature_dim}. "
-                "Run CICIDS preprocessing with matching target_feature_count."
+                "Run CICIDS preprocessing with matching feature schema."
             )
 
-        # Apply 1D CNN on each flow vector to learn cross-feature interactions.
         flow_vectors = x.reshape(batch_size * seq_len, 1, feature_dim)
-        flow_features = self.feature_cnn(flow_vectors).squeeze(-1)
+        flow_features = self.feature_encoder(flow_vectors).squeeze(-1)
         flow_embeddings = self.flow_projection(flow_features).reshape(batch_size, seq_len, -1)
+        flow_embeddings = self.positional_encoding(flow_embeddings)
+        temporal_outputs = self.temporal_encoder(flow_embeddings)
+        return self.pool(temporal_outputs)
 
-        # Apply positional encoding
-        flow_embeddings = self.pos_encoder(flow_embeddings)
-        
-        # Model temporal evolution across consecutive flow embeddings.
-        temporal_outputs = self.transformer_encoder(flow_embeddings)
-        sequence_repr = temporal_outputs[:, -1, :]
-        logits = self.classifier(sequence_repr)
-        return logits
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.classifier(self.forward_features(x))
 
 
 class NetworkExpert(BaseExpert):
@@ -131,7 +140,7 @@ class NetworkExpert(BaseExpert):
         device: str | torch.device | None = None,
     ) -> None:
         super().__init__(name="network_expert")
-        default_class_names = CANONICAL_CICIDS_15_CLASSES
+        default_class_names = ATTACK_FAMILY_CLASSES
         checkpoint_config: dict[str, Any] = {}
         checkpoint_class_names: tuple[str, ...] = ()
         model_path_obj = Path(model_path) if model_path is not None else None
@@ -148,13 +157,13 @@ class NetworkExpert(BaseExpert):
         self.class_names: tuple[str, ...] = resolved_class_names
 
         resolved_input_dim = int(checkpoint_config.get("input_dim", input_dim))
-        resolved_conv_channels = int(checkpoint_config.get("conv_channels", 96))
+        resolved_conv_channels = int(checkpoint_config.get("conv_channels", 128))
         resolved_conv_kernel_size = int(checkpoint_config.get("conv_kernel_size", 3))
         resolved_flow_embedding_dim = int(checkpoint_config.get("flow_embedding_dim", 128))
         resolved_transformer_heads = int(checkpoint_config.get("transformer_heads", 4))
-        resolved_transformer_layers = int(checkpoint_config.get("transformer_layers", 2))
+        resolved_transformer_layers = int(checkpoint_config.get("transformer_layers", 3))
         resolved_dim_feedforward = int(checkpoint_config.get("dim_feedforward", 256))
-        resolved_dropout = float(checkpoint_config.get("dropout", 0.3))
+        resolved_dropout = float(checkpoint_config.get("dropout", 0.2))
 
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.model = CNNTransformerClassifier(
@@ -208,26 +217,16 @@ class NetworkExpert(BaseExpert):
 
     def _compute_anomaly_score(self, probabilities: torch.Tensor) -> float:
         if "Benign" in self.class_names:
-            normal_index = self.class_names.index("Benign")
-            normal_probability = float(probabilities[normal_index].item())
-            score = 1.0 - normal_probability
-        elif "Normal" in self.class_names:
-            normal_index = self.class_names.index("Normal")
-            normal_probability = float(probabilities[normal_index].item())
-            score = 1.0 - normal_probability
-        else:
-            score = float(torch.max(probabilities).item())
-        return float(max(0.0, min(score, 1.0)))
+            benign_index = self.class_names.index("Benign")
+            return float(max(0.0, min(1.0, 1.0 - float(probabilities[benign_index].item()))))
+        return float(max(0.0, min(1.0, float(torch.max(probabilities).item()))))
 
     def _load_weights(self, model_path: Path) -> None:
         if not model_path.exists():
             return
 
-        checkpoint = torch.load(model_path, map_location=self.device)
-        if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-            state_dict = checkpoint["state_dict"]
-        else:
-            state_dict = checkpoint
+        checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+        state_dict = checkpoint["state_dict"] if isinstance(checkpoint, dict) and "state_dict" in checkpoint else checkpoint
 
         try:
             self.model.load_state_dict(state_dict, strict=False)
@@ -242,7 +241,7 @@ class NetworkExpert(BaseExpert):
         if not model_path.exists():
             return {}, ()
 
-        checkpoint = torch.load(model_path, map_location="cpu")
+        checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
         if not isinstance(checkpoint, dict):
             return {}, ()
 
@@ -285,16 +284,7 @@ class NetworkExpert(BaseExpert):
                 "Pass matching class names or use a compatible checkpoint."
             )
 
-        generated = [f"class_{idx}" for idx in range(inferred_num_classes)]
-        return tuple(generated)
-
-
-def _to_bool(value: object) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
-    return bool(value)
+        return tuple(f"class_{idx}" for idx in range(inferred_num_classes))
 
 
 __all__ = ["CNNTransformerClassifier", "NetworkExpert"]

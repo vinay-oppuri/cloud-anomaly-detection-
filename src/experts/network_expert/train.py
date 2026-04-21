@@ -1,49 +1,53 @@
-import os
+from __future__ import annotations
+
+import argparse
 import json
 import time
-import platform
+from dataclasses import dataclass
+from pathlib import Path
+
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from torch.utils.data import Dataset, DataLoader
-from sklearn.metrics import (f1_score, roc_auc_score,
-                              classification_report,
-                              confusion_matrix,
-                              precision_recall_curve)
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    confusion_matrix,
+    f1_score,
+    precision_recall_curve,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
+from torch.utils.data import DataLoader, Dataset
+from tqdm.auto import tqdm
 
 from src.experts.network_expert.model import CNNTransformerClassifier
 
-# ── Paths ──────────────────────────────────────────────────────────
-PRE_DIR    = "data/processed"
-MODEL_DIR  = "models"
-MODEL_PATH = "models/network_expert.pth"
-META_PATH  = "models/network_meta.json"
-PLOT_PATH  = "models/network_curves.png"
 
-# ── Config ─────────────────────────────────────────────────────────
+PRE_DIR_DEFAULT = Path("data/processed")
+MODEL_DIR_DEFAULT = Path("models")
+MODEL_PATH_DEFAULT = MODEL_DIR_DEFAULT / "network_expert.pth"
+META_PATH_DEFAULT = MODEL_DIR_DEFAULT / "network_meta.json"
+
+
 CFG = {
-    # Model
-    "conv_channels"       : 128,
-    "conv_kernel_size"    : 3,
-    "flow_embedding_dim"  : 128,
-    "transformer_heads"   : 4,
-    "transformer_layers"  : 2,
-    "dim_feedforward"     : 256,
-    "dropout"             : 0.3,
-
-    # Training
-    "batch_size"    : 512,
-    "epochs"        : 10,
-    "lr"            : 1e-3,
-    "weight_decay"  : 1e-4,
-    "grad_clip"     : 1.0,
-    "patience"      : 4,
-    "seed"          : 42,
+    "conv_channels": 128,
+    "conv_kernel_size": 3,
+    "flow_embedding_dim": 128,
+    "transformer_heads": 4,
+    "transformer_layers": 3,
+    "dim_feedforward": 256,
+    "dropout": 0.2,
+    "batch_size": 256,
+    "epochs": 20,
+    "lr": 1e-3,
+    "weight_decay": 1e-4,
+    "grad_clip": 1.0,
+    "patience": 5,
+    "seed": 42,
 }
+
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if DEVICE.type == "cuda":
@@ -51,265 +55,422 @@ if DEVICE.type == "cuda":
     torch.set_float32_matmul_precision("high")
 
 
-# ══════════════════════════════════════════════════════════════════
-#  DATASET
-# ══════════════════════════════════════════════════════════════════
+@dataclass(slots=True)
+class TrainConfig:
+    preprocessed_dir: Path
+    model_path: Path
+    meta_path: Path
+
 
 class FlowDataset(Dataset):
-    def __init__(self, X, y):
-        self.X = X
-        self.y = y.float()   # float for BCEWithLogitsLoss
-    def __len__(self): return len(self.X)
-    def __getitem__(self, i): return self.X[i], self.y[i]
+    def __init__(self, features: torch.Tensor, labels: torch.Tensor) -> None:
+        self.features = features.float()
+        self.labels = labels.long()
+
+    def __len__(self) -> int:
+        return int(self.features.shape[0])
+
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.features[index], self.labels[index]
 
 
-def load_data():
-    def pt(name):
-        p = os.path.join(PRE_DIR, name)
-        if not os.path.exists(p):
-            raise FileNotFoundError(
-                f"{p} not found - run: uv run prepare_cicids")
-        return torch.load(p, weights_only=True)
-
-    train_X, train_y = pt("train_X.pt"), pt("train_y.pt")
-    val_X,   val_y   = pt("val_X.pt"),   pt("val_y.pt")
-    test_X,  test_y  = pt("test_X.pt"),  pt("test_y.pt")
-
-    with open(os.path.join(PRE_DIR, "meta.json")) as f:
-        meta = json.load(f)
-
-    pos_weight = torch.tensor([meta["pos_weight"]], dtype=torch.float32)
-
-    print(f"[Data] Train:{len(train_X):,} Val:{len(val_X):,} "
-          f"Test:{len(test_X):,}")
-    print(f"  Shape   : {tuple(train_X.shape)}")
-    print(f"  pos_weight = {pos_weight.item():.2f}  "
-          f"(anomaly penalized {pos_weight.item():.1f}x more)\n")
-
-    return (train_X, train_y, val_X, val_y, test_X, test_y,
-            pos_weight, meta)
+def parse_args() -> TrainConfig:
+    parser = argparse.ArgumentParser(description="Train the CICIDS2018 network anomaly detector.")
+    parser.add_argument("--preprocessed-dir", type=Path, default=PRE_DIR_DEFAULT)
+    parser.add_argument("--model-path", type=Path, default=MODEL_PATH_DEFAULT)
+    parser.add_argument("--meta-path", type=Path, default=META_PATH_DEFAULT)
+    args = parser.parse_args()
+    return TrainConfig(
+        preprocessed_dir=args.preprocessed_dir,
+        model_path=args.model_path,
+        meta_path=args.meta_path,
+    )
 
 
-def make_loaders(train_X, train_y, val_X, val_y, test_X, test_y):
-    nw  = 0 if platform.system() == "Windows" else 4
-    pin = DEVICE.type == "cuda"
-    kw  = dict(num_workers=nw, pin_memory=pin)
-
-    tr = DataLoader(FlowDataset(train_X, train_y),
-                    batch_size=CFG["batch_size"], shuffle=True,  **kw)
-    va = DataLoader(FlowDataset(val_X, val_y),
-                    batch_size=CFG["batch_size"], shuffle=False, **kw)
-    te = DataLoader(FlowDataset(test_X, test_y),
-                    batch_size=CFG["batch_size"], shuffle=False, **kw)
-    return tr, va, te
+def main() -> None:
+    config = parse_args()
+    train_network_model(config)
 
 
-# ══════════════════════════════════════════════════════════════════
-#  TRAINING
-# ══════════════════════════════════════════════════════════════════
+def train_network_model(config: TrainConfig) -> None:
+    seed_everything(CFG["seed"])
+    print("=" * 64)
+    print("  CICIDS2018 CNN-Transformer Training")
+    print("=" * 64)
+    print(f"  Device : {DEVICE}")
 
-def train_epoch(model, loader, optimizer, scheduler, criterion):
+    (
+        train_X,
+        train_y,
+        val_X,
+        val_y,
+        test_X,
+        test_y,
+        class_names,
+        feature_cols,
+        seq_len,
+    ) = load_data(config.preprocessed_dir)
+
+    train_loader, val_loader, test_loader = make_loaders(
+        train_X=train_X,
+        train_y=train_y,
+        val_X=val_X,
+        val_y=val_y,
+        test_X=test_X,
+        test_y=test_y,
+    )
+    print(
+        f"  Train batches/epoch : {len(train_loader):,} | "
+        f"Val batches/epoch : {len(val_loader):,} | "
+        f"Test batches : {len(test_loader):,}"
+    )
+
+    class_weights = compute_class_weights(train_y=train_y, num_classes=len(class_names)).to(DEVICE)
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    model = CNNTransformerClassifier(
+        input_dim=train_X.shape[-1],
+        num_classes=len(class_names),
+        conv_channels=CFG["conv_channels"],
+        conv_kernel_size=CFG["conv_kernel_size"],
+        flow_embedding_dim=CFG["flow_embedding_dim"],
+        transformer_heads=CFG["transformer_heads"],
+        transformer_layers=CFG["transformer_layers"],
+        dim_feedforward=CFG["dim_feedforward"],
+        dropout=CFG["dropout"],
+    ).to(DEVICE)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=CFG["lr"], weight_decay=CFG["weight_decay"])
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="max",
+        factor=0.5,
+        patience=2,
+    )
+
+    config.model_path.parent.mkdir(parents=True, exist_ok=True)
+    config.meta_path.parent.mkdir(parents=True, exist_ok=True)
+
+    best_macro_f1 = -1.0
+    best_epoch = 0
+    patience_counter = 0
+    started_at = time.time()
+
+    for epoch in range(1, CFG["epochs"] + 1):
+        train_loss = train_epoch(
+            model,
+            train_loader,
+            optimizer,
+            criterion,
+            epoch=epoch,
+            total_epochs=CFG["epochs"],
+        )
+        val_metrics = evaluate(
+            model,
+            val_loader,
+            criterion,
+            class_names,
+            progress_desc=f"Epoch {epoch:02d}/{CFG['epochs']} [val]",
+        )
+        scheduler.step(val_metrics["macro_f1"])
+
+        checkpoint = {
+            "state_dict": model.state_dict(),
+            "epoch": epoch,
+            "class_names": class_names,
+            "feature_cols": feature_cols,
+            "threshold": float(val_metrics["best_threshold"]),
+            "config": {
+                "input_dim": int(train_X.shape[-1]),
+                "num_classes": len(class_names),
+                "conv_channels": CFG["conv_channels"],
+                "conv_kernel_size": CFG["conv_kernel_size"],
+                "flow_embedding_dim": CFG["flow_embedding_dim"],
+                "transformer_heads": CFG["transformer_heads"],
+                "transformer_layers": CFG["transformer_layers"],
+                "dim_feedforward": CFG["dim_feedforward"],
+                "dropout": CFG["dropout"],
+                "seq_len": seq_len,
+            },
+        }
+
+        print(
+            f"  Epoch {epoch:02d}/{CFG['epochs']} | "
+            f"train_loss={train_loss:.4f} | "
+            f"val_loss={val_metrics['loss']:.4f} | "
+            f"val_macro_f1={val_metrics['macro_f1']:.4f} | "
+            f"val_anomaly_f1={val_metrics['anomaly_f1']:.4f}"
+        )
+
+        if val_metrics["macro_f1"] > best_macro_f1:
+            best_macro_f1 = float(val_metrics["macro_f1"])
+            best_epoch = epoch
+            patience_counter = 0
+            torch.save(checkpoint, config.model_path)
+        else:
+            patience_counter += 1
+            if patience_counter >= CFG["patience"]:
+                print(f"\nEarly stopping at epoch {epoch}.")
+                break
+
+    elapsed_minutes = (time.time() - started_at) / 60.0
+    print(f"\nTraining finished in {elapsed_minutes:.1f} min. Best epoch: {best_epoch}")
+
+    best_checkpoint = torch.load(config.model_path, map_location=DEVICE, weights_only=False)
+    model.load_state_dict(best_checkpoint["state_dict"])
+
+    val_metrics = evaluate(
+        model,
+        val_loader,
+        criterion,
+        class_names,
+        threshold=float(best_checkpoint["threshold"]),
+        progress_desc="Final validation",
+    )
+    test_metrics = evaluate(
+        model,
+        test_loader,
+        criterion,
+        class_names,
+        threshold=float(best_checkpoint["threshold"]),
+        progress_desc="Final test",
+    )
+
+    metrics_payload = {
+        "dataset": "CICIDS2018",
+        "device": str(DEVICE),
+        "best_epoch": best_epoch,
+        "class_names": class_names,
+        "feature_cols": feature_cols,
+        "seq_len": seq_len,
+        "threshold": float(best_checkpoint["threshold"]),
+        "best_threshold": float(best_checkpoint["threshold"]),
+        "threshold_source": "validation_pr_curve",
+        "config": CFG,
+        "validation": serialise_metrics(val_metrics),
+        "test": serialise_metrics(test_metrics),
+    }
+    config.meta_path.write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
+
+    print(f"Best checkpoint -> {config.model_path}")
+    print(f"Metrics         -> {config.meta_path}")
+
+
+def load_data(
+    preprocessed_dir: Path,
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    list[str],
+    list[str],
+    int,
+]:
+    def load_tensor(name: str, dtype: torch.dtype) -> torch.Tensor:
+        path = preprocessed_dir / name
+        if not path.exists():
+            raise FileNotFoundError(f"Missing preprocessing artifact: {path}. Run `uv run prepare_cicids` first.")
+        tensor = torch.load(path, map_location="cpu", weights_only=False)
+        return torch.as_tensor(tensor, dtype=dtype)
+
+    train_X = load_tensor("train_X.pt", torch.float32)
+    train_y = load_tensor("train_y.pt", torch.long)
+    val_X = load_tensor("val_X.pt", torch.float32)
+    val_y = load_tensor("val_y.pt", torch.long)
+    test_X = load_tensor("test_X.pt", torch.float32)
+    test_y = load_tensor("test_y.pt", torch.long)
+
+    class_info_path = preprocessed_dir / "class_info.json"
+    feature_cols_path = preprocessed_dir / "feature_cols.json"
+    meta_path = preprocessed_dir / "meta.json"
+    if not class_info_path.exists() or not feature_cols_path.exists():
+        raise FileNotFoundError(
+            "Missing class_info.json or feature_cols.json. Re-run `uv run prepare_cicids` with the new pipeline."
+        )
+
+    class_info = json.loads(class_info_path.read_text(encoding="utf-8"))
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    class_names = [str(item) for item in class_info["class_names"]]
+    feature_cols = [str(item) for item in json.loads(feature_cols_path.read_text(encoding="utf-8"))]
+    seq_len = int(class_info.get("seq_len", meta.get("seq_len", train_X.shape[1])))
+
+    print(f"[Data] Train={len(train_X):,} Val={len(val_X):,} Test={len(test_X):,}")
+    print(f"       Sequence length={seq_len} Features={len(feature_cols)} Classes={class_names}")
+    return train_X, train_y, val_X, val_y, test_X, test_y, class_names, feature_cols, seq_len
+
+
+def make_loaders(
+    *,
+    train_X: torch.Tensor,
+    train_y: torch.Tensor,
+    val_X: torch.Tensor,
+    val_y: torch.Tensor,
+    test_X: torch.Tensor,
+    test_y: torch.Tensor,
+) -> tuple[DataLoader, DataLoader, DataLoader]:
+    loader_kwargs = {
+        "batch_size": CFG["batch_size"],
+        "num_workers": 0,
+        "pin_memory": DEVICE.type == "cuda",
+    }
+    train_loader = DataLoader(FlowDataset(train_X, train_y), shuffle=True, **loader_kwargs)
+    val_loader = DataLoader(FlowDataset(val_X, val_y), shuffle=False, **loader_kwargs)
+    test_loader = DataLoader(FlowDataset(test_X, test_y), shuffle=False, **loader_kwargs)
+    return train_loader, val_loader, test_loader
+
+
+def compute_class_weights(train_y: torch.Tensor, num_classes: int) -> torch.Tensor:
+    counts = torch.bincount(train_y, minlength=num_classes).float()
+    counts = torch.where(counts > 0, counts, torch.ones_like(counts))
+    weights = counts.sum() / counts
+    return weights / weights.mean()
+
+
+def train_epoch(
+    model: nn.Module,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.Module,
+    *,
+    epoch: int,
+    total_epochs: int,
+) -> float:
     model.train()
-    total, n = 0.0, 0
-    for X, y in loader:
-        X, y   = X.to(DEVICE, non_blocking=True), y.to(DEVICE, non_blocking=True)
-        loss   = criterion(model(X).squeeze(-1), y)
+    total_loss = 0.0
+    total_samples = 0
+    progress = tqdm(
+        loader,
+        desc=f"Epoch {epoch:02d}/{total_epochs} [train]",
+        unit="batch",
+        dynamic_ncols=True,
+        leave=False,
+    )
+    for batch_X, batch_y in progress:
+        batch_X = batch_X.to(DEVICE, non_blocking=True)
+        batch_y = batch_y.to(DEVICE, non_blocking=True)
+        logits = model(batch_X)
+        loss = criterion(logits, batch_y)
+
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), CFG["grad_clip"])
         optimizer.step()
-        scheduler.step()
-        total += loss.item() * len(y); n += len(y)
-    return total / n
+
+        batch_size = int(batch_y.shape[0])
+        total_loss += float(loss.item()) * batch_size
+        total_samples += batch_size
+        progress.set_postfix(loss=f"{loss.item():.4f}", lr=f"{optimizer.param_groups[0]['lr']:.2e}")
+    return total_loss / max(1, total_samples)
 
 
-@torch.no_grad()
-def evaluate(model, loader):
+@torch.inference_mode()
+def evaluate(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    class_names: list[str],
+    threshold: float | None = None,
+    progress_desc: str | None = None,
+) -> dict[str, object]:
     model.eval()
-    yl, yp = [], []
-    for X, y in loader:
-        X      = X.to(DEVICE, non_blocking=True)
-        logits = model(X).squeeze(-1)
-        probs  = torch.sigmoid(logits).cpu().numpy()
-        yl.extend(y.numpy())
-        yp.extend(probs)
-    return np.array(yl), np.array(yp)
+    all_logits: list[torch.Tensor] = []
+    all_labels: list[torch.Tensor] = []
+    total_loss = 0.0
+    total_samples = 0
 
+    iterator = loader
+    if progress_desc is not None:
+        iterator = tqdm(
+            loader,
+            desc=progress_desc,
+            unit="batch",
+            dynamic_ncols=True,
+            leave=False,
+        )
 
-def best_threshold(y_true, y_probs):
-    """F1-maximising threshold on val set."""
-    p, r, t = precision_recall_curve(y_true, y_probs)
-    f1 = np.where((p+r) == 0, 0, 2*p*r/(p+r))
-    idx = int(np.argmax(f1))
-    return float(t[idx]) if idx < len(t) else 0.5
+    for batch_X, batch_y in iterator:
+        batch_X = batch_X.to(DEVICE, non_blocking=True)
+        batch_y = batch_y.to(DEVICE, non_blocking=True)
+        logits = model(batch_X)
+        loss = criterion(logits, batch_y)
+        total_loss += float(loss.item()) * int(batch_y.shape[0])
+        total_samples += int(batch_y.shape[0])
+        all_logits.append(logits.cpu())
+        all_labels.append(batch_y.cpu())
 
+    logits_tensor = torch.cat(all_logits, dim=0)
+    labels_tensor = torch.cat(all_labels, dim=0)
+    probs = torch.softmax(logits_tensor, dim=-1).numpy()
+    preds = probs.argmax(axis=1)
+    labels = labels_tensor.numpy()
 
-def print_results(y_true, y_probs, thr):
-    y_pred = (y_probs >= thr).astype(int)
-    print(f"\n{'='*55}")
-    print(f"  Network Expert - Test Results (thr={thr:.4f})")
-    print(f"{'='*55}")
-    print(classification_report(y_true, y_pred,
-                                target_names=["Benign", "Anomaly"],
-                                digits=4))
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-    f1  = f1_score(y_true, y_pred, zero_division=0)
-    auc = roc_auc_score(y_true, y_probs)
-    print(f"  F1={f1:.4f}  AUC={auc:.4f}")
-    print(f"  Caught : {tp}/{tp+fn}  ({100*tp/(tp+fn+1e-9):.1f}%)")
-    print(f"  False+ : {fp}")
-    print(f"  Missed : {fn}")
-    return {"f1":f1, "auc":auc, "threshold":thr,
-            "tp":int(tp), "fp":int(fp), "fn":int(fn)}
+    benign_index = class_names.index("Benign") if "Benign" in class_names else 0
+    anomaly_scores = 1.0 - probs[:, benign_index]
+    y_true_anomaly = (labels != benign_index).astype(np.int64, copy=False)
+    if threshold is None:
+        threshold = compute_best_threshold(y_true_anomaly, anomaly_scores)
+    y_pred_anomaly = (anomaly_scores >= threshold).astype(np.int64, copy=False)
 
-
-def save_plot(tr_l, va_f1, path):
-    ep = range(1, len(tr_l)+1)
-    fig, (a1, a2) = plt.subplots(1, 2, figsize=(11, 4))
-    a1.plot(ep, tr_l, marker="o", ms=3)
-    a1.set_title("Training Loss"); a1.grid(alpha=.3)
-    a2.plot(ep, va_f1, color="green", marker="^", ms=3)
-    a2.set_title("Val F1"); a2.set_ylim(0, 1); a2.grid(alpha=.3)
-    plt.suptitle("Network Expert — CNN-LSTM Binary (CICIDS2018)")
-    plt.tight_layout(); plt.savefig(path, dpi=150); plt.close()
-    print(f"Plot -> {path}")
-
-
-# ══════════════════════════════════════════════════════════════════
-#  MAIN
-# ══════════════════════════════════════════════════════════════════
-
-def main():
-    torch.manual_seed(CFG["seed"])
-    np.random.seed(CFG["seed"])
-
-    print("=" * 55)
-    print("  Network Expert - CNN-LSTM Binary Anomaly Detection")
-    print("  Dataset : CSE-CICIDS2018  (Binary: Benign / Anomaly)")
-    print("=" * 55)
-    print(f"  Device  : {DEVICE}")
-    if DEVICE.type == "cuda":
-        print(f"  GPU     : {torch.cuda.get_device_name(0)}")
-
-    os.makedirs(MODEL_DIR, exist_ok=True)
-
-    # Load
-    (train_X, train_y, val_X, val_y, test_X, test_y,
-     pos_weight, meta) = load_data()
-
-    n_features = meta["n_features"]
-    seq_len    = meta["seq_len"]
-
-    tr_l, va_l, te_l = make_loaders(
-        train_X, train_y, val_X, val_y, test_X, test_y)
-
-    # Model
-    model = CNNTransformerClassifier(
-        input_dim           = n_features,
-        num_classes         = 1,
-        conv_channels       = CFG["conv_channels"],
-        conv_kernel_size    = CFG["conv_kernel_size"],
-        flow_embedding_dim  = CFG["flow_embedding_dim"],
-        transformer_heads   = CFG["transformer_heads"],
-        transformer_layers  = CFG["transformer_layers"],
-        dim_feedforward     = CFG["dim_feedforward"],
-        dropout             = CFG["dropout"],
-    ).to(DEVICE)
-
-    total_p = sum(p.numel() for p in model.parameters())
-    print(f"  Params  : {total_p:,}\n")
-
-    # Loss: BCEWithLogitsLoss + pos_weight for class imbalance
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight.to(DEVICE))
-
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=CFG["lr"], weight_decay=CFG["weight_decay"])
-
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer,
-        max_lr          = CFG["lr"],
-        steps_per_epoch = len(tr_l),
-        epochs          = CFG["epochs"],
-        pct_start       = 0.1,
-        anneal_strategy = "cos",
+    report = classification_report(
+        labels,
+        preds,
+        target_names=class_names,
+        output_dict=True,
+        zero_division=0,
     )
+    tn, fp, fn, tp = confusion_matrix(y_true_anomaly, y_pred_anomaly, labels=[0, 1]).ravel()
+    try:
+        roc_auc = float(roc_auc_score(y_true_anomaly, anomaly_scores))
+    except ValueError:
+        roc_auc = None
 
-    # Train
-    print(f"Training {CFG['epochs']} epochs (patience={CFG['patience']})...")
-    print("-" * 55)
+    return {
+        "loss": total_loss / max(1, total_samples),
+        "accuracy": accuracy_score(labels, preds),
+        "macro_f1": f1_score(labels, preds, average="macro", zero_division=0),
+        "weighted_f1": f1_score(labels, preds, average="weighted", zero_division=0),
+        "anomaly_precision": precision_score(y_true_anomaly, y_pred_anomaly, zero_division=0),
+        "anomaly_recall": recall_score(y_true_anomaly, y_pred_anomaly, zero_division=0),
+        "anomaly_f1": f1_score(y_true_anomaly, y_pred_anomaly, zero_division=0),
+        "roc_auc": roc_auc,
+        "best_threshold": float(threshold),
+        "tp": int(tp),
+        "tn": int(tn),
+        "fp": int(fp),
+        "fn": int(fn),
+        "classification_report": report,
+    }
 
-    best_f1   = 0.0
-    no_improv = 0
-    tr_losses = []
-    va_f1s    = []
-    t0        = time.time()
 
-    for epoch in range(1, CFG["epochs"] + 1):
-        tr = train_epoch(model, tr_l, optimizer, scheduler, criterion)
+def compute_best_threshold(y_true: np.ndarray, anomaly_scores: np.ndarray) -> float:
+    precision, recall, thresholds = precision_recall_curve(y_true, anomaly_scores)
+    f1_values = np.where(
+        (precision + recall) > 0,
+        2.0 * precision * recall / (precision + recall),
+        0.0,
+    )
+    best_index = int(np.argmax(f1_values))
+    if best_index >= len(thresholds):
+        return 0.5
+    return float(thresholds[best_index])
 
-        vy, vp  = evaluate(model, va_l)
-        vf      = f1_score(vy, (vp >= 0.5).astype(int), zero_division=0)
 
-        try:
-            vauc = roc_auc_score(vy, vp)
-        except Exception:
-            vauc = 0.0
-
-        tr_losses.append(tr); va_f1s.append(vf)
-
-        print(f"  Ep {epoch:2d}/{CFG['epochs']} | "
-              f"Loss:{tr:.4f} | "
-              f"Val F1:{vf:.4f} | AUC:{vauc:.4f} | "
-              f"LR:{optimizer.param_groups[0]['lr']:.1e}")
-
-        if vf > best_f1:
-            best_f1   = vf
-            no_improv = 0
-            torch.save({
-                "state_dict" : model.state_dict(),
-                "epoch"      : epoch,
-                "n_features" : n_features,
-                "seq_len"    : seq_len,
-                "config"     : CFG,
-            }, MODEL_PATH)
-            print(f"    [saved] f1={vf:.4f}")
+def serialise_metrics(metrics: dict[str, object]) -> dict[str, object]:
+    serialised: dict[str, object] = {}
+    for key, value in metrics.items():
+        if isinstance(value, (np.floating, np.integer)):
+            serialised[key] = value.item()
         else:
-            no_improv += 1
-            if no_improv >= CFG["patience"]:
-                print(f"\n  Early stop at epoch {epoch}")
-                break
+            serialised[key] = value
+    return serialised
 
-    print(f"\nDone in {(time.time()-t0)/60:.1f} min | Best F1={best_f1:.4f}")
 
-    ckpt = torch.load(MODEL_PATH, map_location=DEVICE, weights_only=False)
-    model.load_state_dict(ckpt["state_dict"])
-
-    vy, vp = evaluate(model, va_l)
-    thr    = best_threshold(vy, vp)
-    print(f"Optimal threshold: {thr:.4f}")
-
-    # Update checkpoint with threshold
-    ckpt["threshold"] = thr
-    torch.save(ckpt, MODEL_PATH)
-
-    ty, tp_probs = evaluate(model, te_l)
-    results      = print_results(ty, tp_probs, thr)
-
-    save_plot(tr_losses, va_f1s, PLOT_PATH)
-
-    with open(META_PATH, "w") as f:
-        json.dump({
-            "n_features" : n_features,
-            "seq_len"    : seq_len,
-            "threshold"  : thr,
-            "cfg"        : CFG,
-            "test"       : results,
-            "dataset"    : "CSE-CICIDS2018 (binary)",
-        }, f, indent=2)
-
-    print(f"\nModel -> {MODEL_PATH}")
-    print(f"Meta  -> {META_PATH}")
+def seed_everything(seed: int) -> None:
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 if __name__ == "__main__":

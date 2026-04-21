@@ -353,8 +353,7 @@ def _run_dataset_evaluation(
     )
 
     y_raw = _to_numpy_int_labels(y_split)
-    anomaly_class_index = _resolve_anomaly_class_index(class_names)
-    y_true = (y_raw == anomaly_class_index).astype(np.int64, copy=False)
+    y_true = _to_binary_anomaly_labels(y_raw, class_names)
     y_pred = (scores >= threshold).astype(np.int64, copy=False)
 
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
@@ -460,12 +459,19 @@ def _to_numpy_int_labels(labels: torch.Tensor | np.ndarray | list[int]) -> np.nd
     return np.asarray(labels, dtype=np.int64).reshape(-1)
 
 
-def _resolve_anomaly_class_index(class_names: list[str]) -> int:
+def _to_binary_anomaly_labels(labels: np.ndarray, class_names: list[str]) -> np.ndarray:
+    if "Benign" in class_names:
+        benign_index = int(class_names.index("Benign"))
+        return (labels != benign_index).astype(np.int64, copy=False)
+    if "Normal" in class_names:
+        normal_index = int(class_names.index("Normal"))
+        return (labels != normal_index).astype(np.int64, copy=False)
     if "Anomaly" in class_names:
-        return int(class_names.index("Anomaly"))
-    if len(class_names) == 2 and "Benign" in class_names:
-        return 1 - int(class_names.index("Benign"))
-    return 1
+        anomaly_index = int(class_names.index("Anomaly"))
+        return (labels == anomaly_index).astype(np.int64, copy=False)
+    if len(class_names) == 2:
+        return (labels == 1).astype(np.int64, copy=False)
+    return (labels > 0).astype(np.int64, copy=False)
 
 
 def _append_network_incident_analysis(
@@ -622,20 +628,18 @@ def _load_runtime_assets(
         ckpt_cfg = checkpoint.get("config", {})
         class_names_raw = checkpoint.get("class_names", class_names)
         class_names = [str(item) for item in class_names_raw]
-        if len(class_names) != 2:
-            raise ValueError(f"Expected binary class names in checkpoint, got {class_names}.")
 
         input_dim = int(ckpt_cfg.get("input_dim", len(feature_cols)))
         model = CNNTransformerClassifier(
             input_dim=input_dim,
-            num_classes=int(ckpt_cfg.get("num_classes", 1)),
+            num_classes=int(ckpt_cfg.get("num_classes", len(class_names))),
             conv_channels=int(ckpt_cfg.get("conv_channels", 128)),
             conv_kernel_size=int(ckpt_cfg.get("conv_kernel_size", 3)),
             flow_embedding_dim=int(ckpt_cfg.get("flow_embedding_dim", 128)),
             transformer_heads=int(ckpt_cfg.get("transformer_heads", 4)),
-            transformer_layers=int(ckpt_cfg.get("transformer_layers", 2)),
+            transformer_layers=int(ckpt_cfg.get("transformer_layers", 3)),
             dim_feedforward=int(ckpt_cfg.get("dim_feedforward", 256)),
-            dropout=float(ckpt_cfg.get("dropout", 0.3)),
+            dropout=float(ckpt_cfg.get("dropout", 0.2)),
         )
         model.load_state_dict(checkpoint["state_dict"], strict=False)
     elif "model_state" in checkpoint:
@@ -1118,7 +1122,6 @@ def _predict_anomaly_scores(
     batch_size: int,
     device: torch.device,
 ) -> np.ndarray:
-    anomaly_idx = class_names.index("Anomaly") if "Anomaly" in class_names else 1
     out_scores: list[np.ndarray] = []
     total = int(sequences.shape[0])
 
@@ -1135,7 +1138,19 @@ def _predict_anomaly_scores(
             scores = torch.sigmoid(logits[:, 0])
         elif logits.ndim == 2 and logits.shape[1] >= 2:
             probs = torch.softmax(logits, dim=1)
-            scores = probs[:, anomaly_idx]
+            if "Benign" in class_names:
+                benign_index = int(class_names.index("Benign"))
+                scores = 1.0 - probs[:, benign_index]
+            elif "Normal" in class_names:
+                normal_index = int(class_names.index("Normal"))
+                scores = 1.0 - probs[:, normal_index]
+            elif "Anomaly" in class_names:
+                anomaly_index = int(class_names.index("Anomaly"))
+                scores = probs[:, anomaly_index]
+            elif logits.shape[1] == 2:
+                scores = probs[:, 1]
+            else:
+                scores = probs[:, 1:].sum(dim=1)
         else:
             raise ValueError(f"Unsupported logits shape from model: {tuple(logits.shape)}")
         out_scores.append(scores.detach().cpu().numpy().astype(np.float32, copy=False))

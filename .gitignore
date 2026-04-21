@@ -39,3 +39,4 @@ data/raw/**/*.zip
 data/raw/**/*.gz
 data/raw/**/*.parquet
 data/raw/**/*.jsonl
+data/raw/**/*.log

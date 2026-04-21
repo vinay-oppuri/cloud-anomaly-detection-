@@ -1,362 +1,460 @@
-import os
+from __future__ import annotations
+
+import argparse
 import json
-import warnings
+from dataclasses import dataclass
+from pathlib import Path
+
+import joblib
 import numpy as np
 import pandas as pd
 import torch
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-import joblib
 from tqdm.auto import tqdm
 
-warnings.filterwarnings("ignore")
-
-# ── Paths ──────────────────────────────────────────────────────────
-RAW_DIR  = "data/raw/cicids2018"
-OUT_DIR  = "data/processed"
-SEED     = 42
-SEQ_LEN  = 20   # consecutive flows per sequence
-CLEAN_DEDUP_CHUNK_ROWS = int(os.environ.get("CICIDS_CLEAN_DEDUP_CHUNK_ROWS", "250000"))
-LOAD_CHUNK_ROWS = int(os.environ.get("CICIDS_LOAD_CHUNK_ROWS", "250000"))
-MAX_ROWS = int(os.environ.get("CICIDS_MAX_ROWS", "0"))  # 0 = no cap
-
-# ── Drop socket/identity columns — not behavioral features ─────────
-DROP_COLS = [
-    "Flow ID", "Src IP", "Source IP",
-    "Dst IP",  "Destination IP",
-    "Src Port","Source Port",
-    "Dst Port","Destination Port",
-    "Timestamp",
-    "Protocol",
-]
-
-# ── All attack labels → 1, Benign → 0 ─────────────────────────────
-BENIGN_LABELS = {"benign", "BENIGN", "Benign"}
+from src.experts.network_expert.constants import ATTACK_FAMILY_CLASSES
 
 
-def load_csvs(raw_dir):
-    files = sorted([f for f in os.listdir(raw_dir) if f.endswith(".csv")])
-    if not files:
-        raise FileNotFoundError(
-            f"No CSV files in {raw_dir}\n"
-        )
+RAW_DIR_DEFAULT = Path("data/raw/cicids2018")
+OUT_DIR_DEFAULT = Path("data/processed")
+FEATURE_COLS_PATH_DEFAULT = OUT_DIR_DEFAULT / "feature_cols.json"
+CLASS_INFO_PATH_DEFAULT = OUT_DIR_DEFAULT / "class_info.json"
+META_PATH_DEFAULT = OUT_DIR_DEFAULT / "meta.json"
+SCALER_PATH_DEFAULT = OUT_DIR_DEFAULT / "scaler.joblib"
 
-    dfs: list[pd.DataFrame] = []
-    running_rows = 0
-    print(f"[Load] {len(files)} CSV files found")
-    for fname in tqdm(files, desc="[Load] Reading CSVs", unit="file", dynamic_ncols=True):
-        path = os.path.join(raw_dir, fname)
-        file_rows = 0
-        file_kept = 0
-
-        read_kwargs = {
-            "low_memory": False,
-            "on_bad_lines": "skip",
-            "chunksize": max(10_000, LOAD_CHUNK_ROWS),
-        }
-        try:
-            reader = pd.read_csv(path, encoding="utf-8", **read_kwargs)
-        except Exception:
-            reader = pd.read_csv(path, encoding="latin-1", **read_kwargs)
-
-        for chunk in reader:
-            file_rows += len(chunk)
-            chunk = _prepare_loaded_chunk(chunk)
-            if chunk.empty:
-                continue
-
-            if MAX_ROWS > 0:
-                remaining = MAX_ROWS - running_rows
-                if remaining <= 0:
-                    break
-                if len(chunk) > remaining:
-                    chunk = chunk.sample(n=remaining, random_state=SEED)
-
-            dfs.append(chunk)
-            kept = len(chunk)
-            file_kept += kept
-            running_rows += kept
-
-            if MAX_ROWS > 0 and running_rows >= MAX_ROWS:
-                break
-
-        print(f"  {fname}: {file_rows:,} rows read | {file_kept:,} rows kept")
-        if MAX_ROWS > 0 and running_rows >= MAX_ROWS:
-            print(f"  Reached max row cap ({MAX_ROWS:,}).")
-            break
-
-    if not dfs:
-        raise RuntimeError("No usable data rows were loaded from CSV files.")
-    combined = pd.concat(dfs, ignore_index=True, copy=False)
-    print(f"[Load] Total: {len(combined):,} rows\n")
-    return combined
+BENIGN_LABELS = {"benign", "normal"}
+IDENTIFIER_COLUMNS = {
+    "Flow ID",
+    "Src IP",
+    "Source IP",
+    "Dst IP",
+    "Destination IP",
+    "Src Port",
+    "Source Port",
+}
 
 
-def find_label_col(df):
-    for c in df.columns:
-        if c.strip().lower() == "label":
-            return c
-    raise ValueError(f"No label column found. Columns: {df.columns.tolist()}")
+@dataclass(slots=True)
+class PreprocessConfig:
+    raw_dir: Path
+    out_dir: Path
+    sequence_length: int
+    step: int
+    train_ratio: float
+    val_ratio: float
+    label_scheme: str
+    load_chunk_rows: int
+    max_rows_per_file: int
+    feature_cols_path: Path
+    class_info_path: Path
+    meta_path: Path
+    scaler_path: Path
 
 
-def _prepare_loaded_chunk(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Early-clean each chunk so we never keep large object/string columns in memory.
-    """
-    if df.empty:
-        return df
+def parse_args() -> PreprocessConfig:
+    parser = argparse.ArgumentParser(description="Prepare CICIDS2018 network sequences.")
+    parser.add_argument("--raw-dir", type=Path, default=RAW_DIR_DEFAULT)
+    parser.add_argument("--out-dir", type=Path, default=OUT_DIR_DEFAULT)
+    parser.add_argument("--sequence-length", type=int, default=20)
+    parser.add_argument("--step", type=int, default=10)
+    parser.add_argument("--train-ratio", type=float, default=0.70)
+    parser.add_argument("--val-ratio", type=float, default=0.15)
+    parser.add_argument("--label-scheme", choices=("family", "raw"), default="family")
+    parser.add_argument("--load-chunk-rows", type=int, default=250_000)
+    parser.add_argument("--max-rows-per-file", type=int, default=0)
+    parser.add_argument("--feature-cols-path", type=Path, default=FEATURE_COLS_PATH_DEFAULT)
+    parser.add_argument("--class-info-path", type=Path, default=CLASS_INFO_PATH_DEFAULT)
+    parser.add_argument("--meta-path", type=Path, default=META_PATH_DEFAULT)
+    parser.add_argument("--scaler-path", type=Path, default=SCALER_PATH_DEFAULT)
+    args = parser.parse_args()
 
-    df = df.copy()
-    df.columns = [c.strip() for c in df.columns]
+    sequence_length = max(4, int(args.sequence_length))
+    step = max(1, int(args.step))
+    if step > sequence_length:
+        step = sequence_length
 
-    lbl_col = find_label_col(df)
-    if lbl_col != "Label":
-        df = df.rename(columns={lbl_col: "Label"})
-    label_series = df["Label"].astype(str).str.strip()
-    df["label_bin"] = np.where(label_series.isin(BENIGN_LABELS), 0, 1).astype(np.int8)
-
-    to_drop = [c for c in DROP_COLS if c in df.columns] + ["Label"]
-    if to_drop:
-        df = df.drop(columns=to_drop, errors="ignore")
-
-    feature_cols = [c for c in df.columns if c != "label_bin"]
-    for col in feature_cols:
-        if not pd.api.types.is_numeric_dtype(df[col]):
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    # fill_non_numeric handled by to_numeric and fillna later
-
-    # Use compact dtypes early to lower memory pressure.
-    for col in df.columns:
-        if col == "label_bin":
-            continue
-        if pd.api.types.is_float_dtype(df[col]):
-            df[col] = df[col].astype(np.float32)
-        elif pd.api.types.is_integer_dtype(df[col]):
-            df[col] = df[col].astype(np.int32)
-
-    return df
-
-
-def _deduplicate_with_hash_progress(df: pd.DataFrame, chunk_rows: int) -> pd.DataFrame:
-    """
-    Chunked duplicate removal with progress and Ctrl+C responsiveness.
-    Uses row hashes; collision risk is negligible for this use case.
-    """
-    n_rows = len(df)
-    if n_rows <= 0:
-        return df
-
-    chunk_rows = max(10_000, int(chunk_rows))
-    n_chunks = (n_rows + chunk_rows - 1) // chunk_rows
-    seen_hashes: set[int] = set()
-    keep_masks: list[np.ndarray] = []
-
-    for start in tqdm(
-        range(0, n_rows, chunk_rows),
-        total=n_chunks,
-        desc="[Clean] Deduplicating",
-        unit="chunk",
-        dynamic_ncols=True,
-    ):
-        end = min(start + chunk_rows, n_rows)
-        chunk = df.iloc[start:end]
-        hashes = pd.util.hash_pandas_object(chunk, index=False).to_numpy(dtype=np.uint64, copy=False)
-        h_series = pd.Series(hashes, copy=False)
-
-        keep_local = ~h_series.duplicated(keep="first").to_numpy()
-        if seen_hashes:
-            unseen_global = ~h_series.isin(seen_hashes).to_numpy()
-            keep_local &= unseen_global
-
-        if keep_local.any():
-            seen_hashes.update(map(int, hashes[keep_local]))
-        keep_masks.append(keep_local)
-
-    keep_mask = np.concatenate(keep_masks, axis=0) if keep_masks else np.zeros((n_rows,), dtype=bool)
-    return df.loc[keep_mask].reset_index(drop=True)
+    return PreprocessConfig(
+        raw_dir=args.raw_dir,
+        out_dir=args.out_dir,
+        sequence_length=sequence_length,
+        step=step,
+        train_ratio=float(args.train_ratio),
+        val_ratio=float(args.val_ratio),
+        label_scheme=args.label_scheme,
+        load_chunk_rows=max(10_000, int(args.load_chunk_rows)),
+        max_rows_per_file=max(0, int(args.max_rows_per_file)),
+        feature_cols_path=args.feature_cols_path,
+        class_info_path=args.class_info_path,
+        meta_path=args.meta_path,
+        scaler_path=args.scaler_path,
+    )
 
 
-def clean(df):
-    print("[Clean] Starting...")
-    steps_total = 6
-    pbar = tqdm(total=steps_total, desc="[Clean] Steps", unit="step", dynamic_ncols=True)
-
-    # Find/create binary label.
-    if "label_bin" not in df.columns:
-        lbl_col = find_label_col(df)
-        df = df.rename(columns={lbl_col: "Label"})
-        df["Label"] = df["Label"].astype(str).str.strip()
-        pbar.update(1)
-        df["label_bin"] = df["Label"].apply(
-            lambda x: 0 if x in BENIGN_LABELS else 1
-        )
-        pbar.update(1)
-    else:
-        # If chunks were preprocessed in loader, label_bin already exists.
-        df["label_bin"] = pd.to_numeric(df["label_bin"], errors="coerce").fillna(1).astype(np.int8)
-        pbar.update(2)
-
-    n_benign = (df["label_bin"] == 0).sum()
-    n_attack = (df["label_bin"] == 1).sum()
-    print(f"  Benign : {n_benign:,}  ({100*n_benign/len(df):.1f}%)")
-    print(f"  Attack : {n_attack:,}  ({100*n_attack/len(df):.1f}%)")
-
-    # Drop identifier columns
-    to_drop = [c for c in DROP_COLS if c in df.columns]
-    if "Label" in df.columns:
-        to_drop.append("Label")
-    if to_drop:
-        df = df.drop(columns=to_drop, errors="ignore")
-    pbar.update(1)
-
-    # Replace inf -> NaN -> median (column-wise to avoid huge temporary allocations)
-    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    if "label_bin" in num_cols:
-        num_cols.remove("label_bin")
-    for col in num_cols:
-        col_values = df[col]
-        col_values = col_values.replace([np.inf, -np.inf], np.nan)
-        median_value = col_values.median()
-        if pd.isna(median_value):
-            median_value = 0.0
-        df[col] = col_values.fillna(median_value)
-    pbar.update(1)
-
-    # Clip negatives in win_bytes columns (CICFlowMeter bug)
-    for c in df.columns:
-        if "win_bytes" in c.lower() or "init_win" in c.lower():
-            df[c] = df[c].clip(lower=0)
-    pbar.update(1)
-
-    # Remove duplicates
-    before = len(df)
-    try:
-        df = _deduplicate_with_hash_progress(df, chunk_rows=CLEAN_DEDUP_CHUNK_ROWS)
-    except KeyboardInterrupt:
-        pbar.close()
-        raise
-    except MemoryError:
-        print("  Dedup skipped due memory pressure; continuing without duplicate removal.")
-    except np.core._exceptions._ArrayMemoryError:
-        print("  Dedup skipped due memory pressure; continuing without duplicate removal.")
-    print(f"  Removed {before-len(df):,} duplicates")
-    print(f"  Clean rows: {len(df):,}\n")
-    pbar.update(1)
-    pbar.close()
-    return df
+def main() -> None:
+    config = parse_args()
+    prepare_cicids(config)
 
 
-def scale(df):
-    print("[Scale] Applying StandardScaler...")
-    feat_df = df.drop(columns=["label_bin"], errors="ignore").copy()
+def prepare_cicids(config: PreprocessConfig) -> None:
+    print("=" * 64)
+    print("  CICIDS2018 Preprocessing + Sequence Generation")
+    print("=" * 64)
 
-    # Coerce any unexpected string/object columns to numeric.
-    for col in feat_df.columns:
-        if not pd.api.types.is_numeric_dtype(feat_df[col]):
-            feat_df[col] = pd.to_numeric(feat_df[col], errors="coerce")
-
-    # Disable dropping feature columns in this pass
-
-    if feat_df.shape[1] == 0:
-        raise ValueError("No numeric feature columns available after preprocessing.")
-
-    feat_df = feat_df.replace([np.inf, -np.inf], np.nan)
-    feat_df = feat_df.fillna(feat_df.median(numeric_only=True)).fillna(0)
-
-    feat_cols = feat_df.columns.tolist()
-    X = feat_df.to_numpy(dtype=np.float32, copy=False)
-    y = df["label_bin"].values.astype(np.int64)
+    csv_files = sorted(config.raw_dir.glob("*.csv"))
+    if not csv_files:
+        raise FileNotFoundError(f"No CICIDS2018 CSV files found in {config.raw_dir}")
 
     scaler = StandardScaler()
-    X = scaler.fit_transform(X)
-    X = np.clip(X, -5, 5)   # clip extreme outliers gracefully for transformer LayerNorm
-    print(f"  X shape: {X.shape}")
-    return X, y, feat_cols, scaler
+    observed_labels: set[str] = set()
+    feature_cols: list[str] | None = None
+    split_row_counts = {"train": 0, "val": 0, "test": 0}
 
+    print("\n[Pass 1/2] Fitting scaler on train partitions")
+    for csv_path in tqdm(csv_files, desc="Fitting scaler", unit="file", dynamic_ncols=True):
+        frame = load_clean_cicids_file(csv_path, config)
+        if frame.empty:
+            continue
+        observed_labels.update(frame["attack_label"].unique().tolist())
+        feature_cols = resolve_feature_columns(frame, feature_cols)
+        split_frames = split_frame(frame, config)
+        train_features = split_frames["train"][feature_cols].to_numpy(dtype=np.float32, copy=False)
+        scaler.partial_fit(train_features)
+        for split_name, split_frame_df in split_frames.items():
+            split_row_counts[split_name] += int(len(split_frame_df))
 
-def build_sequences(X, y, seq_len):
-    """
-    Sliding window of seq_len flows.
-    Label = anomaly if any flow in the window is anomalous.
-    This avoids missing attack windows where the last flow is benign.
-    Step  = seq_len // 2  (50% overlap for more training samples)
-    """
-    print(f"[Seq] Building sequences (len={seq_len}, step={seq_len//2})...")
-    step = seq_len // 2
-    Xs, ys = [], []
-    n_windows = max(0, (len(X) - seq_len) // step + 1)
-    for i in tqdm(
-        range(0, len(X) - seq_len + 1, step),
-        total=n_windows,
-        desc="[Seq] Sliding windows",
-        unit="win",
-        dynamic_ncols=True,
-    ):
-        Xs.append(X[i:i+seq_len])
-        ys.append(int(np.max(y[i:i+seq_len])))
-    Xs = np.array(Xs, dtype=np.float32)
-    ys = np.array(ys, dtype=np.int64)
-    n_anom = ys.sum()
-    print(f"  Sequences : {len(Xs):,}")
-    print(f"  Normal    : {len(ys)-n_anom:,}  ({100*(len(ys)-n_anom)/len(ys):.1f}%)")
-    print(f"  Anomaly   : {n_anom:,}  ({100*n_anom/len(ys):.1f}%)\n")
-    return Xs, ys
+    if feature_cols is None:
+        raise ValueError("No usable CICIDS features were found after preprocessing.")
 
+    class_names = [label for label in ATTACK_FAMILY_CLASSES if label in observed_labels]
+    if config.label_scheme == "raw":
+        class_names = sorted(observed_labels, key=lambda value: (value != "Benign", value))
+    if "Benign" not in class_names:
+        class_names = ["Benign", *class_names]
+    label_to_id = {label: idx for idx, label in enumerate(class_names)}
 
-def split_save(Xs, ys, feat_cols, scaler, out_dir):
-    print("[Split] 70% train / 15% val / 15% test (stratified)...")
-    os.makedirs(out_dir, exist_ok=True)
-
-    X_tv, X_te, y_tv, y_te = train_test_split(
-        Xs, ys, test_size=0.15, random_state=SEED, stratify=ys)
-    X_tr, X_va, y_tr, y_va = train_test_split(
-        X_tv, y_tv, test_size=0.15/0.85, random_state=SEED, stratify=y_tv)
-
-    print(f"  Train: {len(X_tr):,} | Val: {len(X_va):,} | Test: {len(X_te):,}")
-
-    splits = [("train", X_tr, y_tr), ("val", X_va, y_va), ("test", X_te, y_te)]
-    for name, X, y in tqdm(splits, desc="[Split] Saving tensors", unit="split", dynamic_ncols=True):
-        torch.save(torch.tensor(X), os.path.join(out_dir, f"{name}_X.pt"))
-        torch.save(torch.tensor(y), os.path.join(out_dir, f"{name}_y.pt"))
-
-    joblib.dump(scaler, os.path.join(out_dir, "scaler.joblib"))
-
-    # pos_weight for BCEWithLogitsLoss
-    n_norm  = float((y_tr == 0).sum())
-    n_anom  = float((y_tr == 1).sum())
-    pos_w   = n_norm / max(n_anom, 1)
-
-    meta = {
-        "n_features"  : Xs.shape[2],
-        "seq_len"     : SEQ_LEN,
-        "pos_weight"  : pos_w,
-        "n_train"     : len(X_tr),
-        "n_val"       : len(X_va),
-        "n_test"      : len(X_te),
-        "feat_cols"   : feat_cols,
+    print("\n[Pass 2/2] Transforming rows and building windows")
+    sequence_buffers = {
+        split_name: {"X": [], "y": [], "y_binary": [], "meta": []}
+        for split_name in ("train", "val", "test")
     }
-    with open(os.path.join(out_dir, "meta.json"), "w") as f:
-        json.dump(meta, f, indent=2)
+    for csv_path in tqdm(csv_files, desc="Building sequences", unit="file", dynamic_ncols=True):
+        frame = load_clean_cicids_file(csv_path, config)
+        if frame.empty:
+            continue
+        split_frames = split_frame(frame, config)
+        for split_name, split_frame_df in split_frames.items():
+            if split_frame_df.empty:
+                continue
+            transformed = split_frame_df.copy()
+            transformed.loc[:, feature_cols] = scaler.transform(
+                transformed[feature_cols].to_numpy(dtype=np.float32, copy=False)
+            )
+            transformed.loc[:, feature_cols] = transformed[feature_cols].clip(-8.0, 8.0)
+            append_sequence_windows(
+                split_buffer=sequence_buffers[split_name],
+                frame=transformed,
+                feature_cols=feature_cols,
+                label_to_id=label_to_id,
+                sequence_length=config.sequence_length,
+                step=config.step,
+            )
 
-    print(f"  pos_weight = {pos_w:.2f}")
-    print(f"  Saved to {out_dir}/\n")
+    save_outputs(
+        config=config,
+        sequence_buffers=sequence_buffers,
+        feature_cols=feature_cols,
+        class_names=class_names,
+        label_to_id=label_to_id,
+        scaler=scaler,
+        split_row_counts=split_row_counts,
+    )
+
+    print("\nDone. Next: uv run train_cicids")
 
 
-def main():
-    print("=" * 55)
-    print("  CICIDS2018 Binary Anomaly Detection — Preprocessing")
-    print("=" * 55 + "\n")
+def load_clean_cicids_file(csv_path: Path, config: PreprocessConfig) -> pd.DataFrame:
+    chunks: list[pd.DataFrame] = []
+    total_rows = 0
+    read_kwargs = {
+        "low_memory": False,
+        "on_bad_lines": "skip",
+        "chunksize": config.load_chunk_rows,
+    }
 
     try:
-        df  = load_csvs(RAW_DIR)
-        df  = clean(df)
-        X, y, feat_cols, scaler = scale(df)
-        Xs, ys = build_sequences(X, y, SEQ_LEN)
-        split_save(Xs, ys, feat_cols, scaler, OUT_DIR)
-        print("Done! Next: uv run train_cicids")
-    except KeyboardInterrupt:
-        print("\nInterrupted by user (Ctrl+C). Preprocessing stopped cleanly.")
+        reader = pd.read_csv(csv_path, encoding="utf-8", **read_kwargs)
+    except UnicodeDecodeError:
+        reader = pd.read_csv(csv_path, encoding="latin-1", **read_kwargs)
+
+    for chunk in reader:
+        prepared = prepare_chunk(chunk, csv_path.name, label_scheme=config.label_scheme)
+        if prepared.empty:
+            continue
+        if config.max_rows_per_file > 0:
+            remaining = config.max_rows_per_file - total_rows
+            if remaining <= 0:
+                break
+            if len(prepared) > remaining:
+                prepared = prepared.iloc[:remaining].copy()
+        chunks.append(prepared)
+        total_rows += int(len(prepared))
+        if config.max_rows_per_file > 0 and total_rows >= config.max_rows_per_file:
+            break
+
+    if not chunks:
+        return pd.DataFrame()
+
+    frame = pd.concat(chunks, ignore_index=True)
+    frame = frame.drop_duplicates(ignore_index=True)
+    frame = frame.sort_values(["source_file", "timestamp"], kind="stable", na_position="last").reset_index(drop=True)
+    return frame
+
+
+def prepare_chunk(chunk: pd.DataFrame, source_file: str, *, label_scheme: str) -> pd.DataFrame:
+    if chunk.empty:
+        return pd.DataFrame()
+
+    frame = chunk.copy()
+    frame.columns = [str(column).strip() for column in frame.columns]
+
+    label_col = resolve_label_column(frame.columns)
+    if label_col is None:
+        raise KeyError(f"No label column found in CICIDS file. Columns: {frame.columns.tolist()}")
+
+    timestamp_col = resolve_timestamp_column(frame.columns)
+    frame["attack_label"] = frame[label_col].map(lambda value: normalize_attack_label(value, label_scheme=label_scheme))
+    frame["timestamp"] = (
+        pd.to_datetime(frame[timestamp_col], errors="coerce", dayfirst=True)
+        if timestamp_col is not None
+        else pd.NaT
+    )
+    frame["source_file"] = source_file
+
+    drop_columns = [column for column in IDENTIFIER_COLUMNS if column in frame.columns]
+    drop_columns.append(label_col)
+    if timestamp_col is not None:
+        drop_columns.append(timestamp_col)
+    frame = frame.drop(columns=drop_columns, errors="ignore")
+
+    protected_columns = {"attack_label", "timestamp", "source_file"}
+    for column in frame.columns:
+        if column in protected_columns:
+            continue
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+
+    numeric_columns = [column for column in frame.columns if column not in protected_columns]
+    frame[numeric_columns] = frame[numeric_columns].replace([np.inf, -np.inf], np.nan)
+    medians = frame[numeric_columns].median(numeric_only=True).fillna(0.0)
+    frame[numeric_columns] = frame[numeric_columns].fillna(medians)
+    for column in numeric_columns:
+        lowered = column.lower()
+        if "win_bytes" in lowered or "init_win" in lowered:
+            frame[column] = frame[column].clip(lower=0)
+    frame[numeric_columns] = frame[numeric_columns].astype(np.float32)
+    frame = frame.dropna(subset=["attack_label"]).reset_index(drop=True)
+    return frame
+
+
+def resolve_label_column(columns: list[str]) -> str | None:
+    normalized = {column.strip().lower(): column for column in columns}
+    return normalized.get("label")
+
+
+def resolve_timestamp_column(columns: list[str]) -> str | None:
+    normalized = {column.strip().lower(): column for column in columns}
+    for candidate in ("timestamp", "time", "datetime"):
+        if candidate in normalized:
+            return normalized[candidate]
+    return None
+
+
+def normalize_attack_label(value: object, *, label_scheme: str) -> str:
+    raw = str(value).strip()
+    lowered = raw.lower()
+    if lowered in BENIGN_LABELS:
+        return "Benign"
+    if label_scheme == "raw":
+        return raw
+    if "ddos" in lowered:
+        return "DDoS"
+    if "dos" in lowered:
+        return "DoS"
+    if "web attack" in lowered or "sql injection" in lowered or "xss" in lowered:
+        return "WebAttack"
+    if "brute" in lowered or "ftp" in lowered or "ssh" in lowered:
+        return "BruteForce"
+    if "bot" in lowered:
+        return "Botnet"
+    if "infiltration" in lowered:
+        return "Infiltration"
+    return "OtherAttack"
+
+
+def resolve_feature_columns(frame: pd.DataFrame, existing: list[str] | None) -> list[str]:
+    protected_columns = {"attack_label", "timestamp", "source_file"}
+    feature_cols = [column for column in frame.columns if column not in protected_columns]
+    if existing is None:
+        return feature_cols
+    if feature_cols != existing:
+        missing = sorted(set(existing) ^ set(feature_cols))
+        raise ValueError(f"Inconsistent CICIDS feature schema across files. Mismatch: {missing[:10]}")
+    return existing
+
+
+def split_frame(frame: pd.DataFrame, config: PreprocessConfig) -> dict[str, pd.DataFrame]:
+    total_rows = len(frame)
+    if total_rows == 0:
+        return {"train": frame.iloc[0:0], "val": frame.iloc[0:0], "test": frame.iloc[0:0]}
+
+    train_end = max(1, int(total_rows * config.train_ratio))
+    val_end = max(train_end + 1, int(total_rows * (config.train_ratio + config.val_ratio)))
+    val_end = min(val_end, total_rows)
+
+    if val_end >= total_rows:
+        val_end = max(train_end, total_rows - 1)
+
+    train_frame = frame.iloc[:train_end].reset_index(drop=True)
+    val_frame = frame.iloc[train_end:val_end].reset_index(drop=True)
+    test_frame = frame.iloc[val_end:].reset_index(drop=True)
+
+    return {"train": train_frame, "val": val_frame, "test": test_frame}
+
+
+def append_sequence_windows(
+    *,
+    split_buffer: dict[str, list[object]],
+    frame: pd.DataFrame,
+    feature_cols: list[str],
+    label_to_id: dict[str, int],
+    sequence_length: int,
+    step: int,
+) -> None:
+    if frame.empty:
+        return
+
+    values = frame[feature_cols].to_numpy(dtype=np.float32, copy=False)
+    labels = frame["attack_label"].tolist()
+    timestamps = frame["timestamp"].tolist()
+    source_file = str(frame["source_file"].iloc[0])
+
+    if len(frame) < sequence_length:
+        padded = np.zeros((sequence_length, values.shape[1]), dtype=np.float32)
+        padded[-len(values) :] = values
+        window_label = resolve_window_label(labels)
+        split_buffer["X"].append(padded)
+        split_buffer["y"].append(label_to_id[window_label])
+        split_buffer["y_binary"].append(0 if window_label == "Benign" else 1)
+        split_buffer["meta"].append(
+            {
+                "source_file": source_file,
+                "start_index": 0,
+                "end_index": len(frame) - 1,
+                "start_timestamp": timestamp_to_string(timestamps[0]),
+                "end_timestamp": timestamp_to_string(timestamps[-1]),
+                "window_label": window_label,
+            }
+        )
+        return
+
+    for start_idx in range(0, len(frame) - sequence_length + 1, step):
+        end_idx = start_idx + sequence_length
+        window_values = values[start_idx:end_idx]
+        window_labels = labels[start_idx:end_idx]
+        window_label = resolve_window_label(window_labels)
+        split_buffer["X"].append(window_values.astype(np.float32, copy=False))
+        split_buffer["y"].append(label_to_id[window_label])
+        split_buffer["y_binary"].append(0 if window_label == "Benign" else 1)
+        split_buffer["meta"].append(
+            {
+                "source_file": source_file,
+                "start_index": start_idx,
+                "end_index": end_idx - 1,
+                "start_timestamp": timestamp_to_string(timestamps[start_idx]),
+                "end_timestamp": timestamp_to_string(timestamps[end_idx - 1]),
+                "window_label": window_label,
+            }
+        )
+
+
+def resolve_window_label(labels: list[str]) -> str:
+    attack_labels = [label for label in labels if label != "Benign"]
+    if not attack_labels:
+        return "Benign"
+    counts = pd.Series(attack_labels).value_counts()
+    return str(counts.index[0])
+
+
+def timestamp_to_string(value: object) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    return pd.Timestamp(value).isoformat()
+
+
+def save_outputs(
+    *,
+    config: PreprocessConfig,
+    sequence_buffers: dict[str, dict[str, list[object]]],
+    feature_cols: list[str],
+    class_names: list[str],
+    label_to_id: dict[str, int],
+    scaler: StandardScaler,
+    split_row_counts: dict[str, int],
+) -> None:
+    config.out_dir.mkdir(parents=True, exist_ok=True)
+    config.feature_cols_path.parent.mkdir(parents=True, exist_ok=True)
+    config.class_info_path.parent.mkdir(parents=True, exist_ok=True)
+    config.meta_path.parent.mkdir(parents=True, exist_ok=True)
+    config.scaler_path.parent.mkdir(parents=True, exist_ok=True)
+
+    split_sizes: dict[str, int] = {}
+    for split_name, buffer in sequence_buffers.items():
+        if not buffer["X"]:
+            raise ValueError(f"No sequence windows were generated for split '{split_name}'.")
+        features = np.stack(buffer["X"], axis=0).astype(np.float32, copy=False)
+        labels = np.asarray(buffer["y"], dtype=np.int64)
+        anomaly_labels = np.asarray(buffer["y_binary"], dtype=np.int64)
+        torch.save(torch.from_numpy(features), config.out_dir / f"{split_name}_X.pt")
+        torch.save(torch.from_numpy(labels), config.out_dir / f"{split_name}_y.pt")
+        torch.save(torch.from_numpy(anomaly_labels), config.out_dir / f"{split_name}_y_binary.pt")
+        torch.save(buffer["meta"], config.out_dir / f"{split_name}_meta.pt")
+        split_sizes[split_name] = int(features.shape[0])
+
+    joblib.dump(scaler, config.scaler_path)
+    config.feature_cols_path.write_text(json.dumps(feature_cols, indent=2), encoding="utf-8")
+
+    class_info = {
+        "class_names": class_names,
+        "label_to_id": label_to_id,
+        "seq_len": config.sequence_length,
+        "step": config.step,
+        "benign_label": "Benign",
+        "label_scheme": config.label_scheme,
+        "split_sizes": split_sizes,
+    }
+    config.class_info_path.write_text(json.dumps(class_info, indent=2), encoding="utf-8")
+
+    meta = {
+        "dataset": "CICIDS2018",
+        "n_features": len(feature_cols),
+        "seq_len": config.sequence_length,
+        "step": config.step,
+        "feature_columns": feature_cols,
+        "class_names": class_names,
+        "label_scheme": config.label_scheme,
+        "row_split_sizes": split_row_counts,
+        "sequence_split_sizes": split_sizes,
+    }
+    config.meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    print("\n[Summary]")
+    print(f"  Feature count : {len(feature_cols)}")
+    print(f"  Classes       : {class_names}")
+    print(f"  Row splits    : {split_row_counts}")
+    print(f"  Seq splits    : {split_sizes}")
+    print(f"\nScaler      -> {config.scaler_path}")
+    print(f"Features    -> {config.feature_cols_path}")
+    print(f"Class info  -> {config.class_info_path}")
+    print(f"Meta        -> {config.meta_path}")
 
 
 if __name__ == "__main__":

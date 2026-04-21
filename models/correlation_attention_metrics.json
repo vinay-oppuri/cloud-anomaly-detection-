@@ -1,0 +1,28 @@
+{
+  "device": "cuda",
+  "best_epoch": 19,
+  "elapsed_minutes": 0.761,
+  "train_pairs": 14985,
+  "val_pairs": 12447,
+  "best_threshold": 0.8916797041893005,
+  "config": {
+    "hidden_dim": 128,
+    "dropout": 0.1,
+    "batch_size": 512,
+    "epochs": 40,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "grad_clip": 1.0,
+    "patience": 8,
+    "seed": 42,
+    "temporal_window_minutes": 20
+  },
+  "validation": {
+    "loss": 0.07883289602003088,
+    "accuracy": 0.982566080179963,
+    "precision": 0.9666797334378675,
+    "recall": 0.9905603534846354,
+    "f1": 0.9784743577026088,
+    "best_threshold": 0.8916797041893005
+  }
+}

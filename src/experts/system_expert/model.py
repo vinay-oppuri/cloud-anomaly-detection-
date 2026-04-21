@@ -11,7 +11,7 @@ from src.experts.base_expert import BaseExpert, ExpertPrediction
 
 
 class PositionalEncoding(nn.Module):
-    """Sinusoidal positional encoding for transformer token embeddings."""
+    """Sinusoidal positional encoding for log-template sequences."""
 
     def __init__(self, d_model: int, max_len: int = 512) -> None:
         super().__init__()
@@ -29,23 +29,46 @@ class PositionalEncoding(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.ndim != 3:
-            raise ValueError("Expected tensor with shape [batch, seq_len, hidden_dim].")
-        seq_len = x.shape[1]
-        return x + self.pe[:, :seq_len, :]
+            raise ValueError("Expected [batch, seq_len, hidden_dim] tensor for positional encoding.")
+        return x + self.pe[:, : x.shape[1], :]
+
+
+class AttentionPooling(nn.Module):
+    """Learned pooling over encoder outputs for a stable sequence embedding."""
+
+    def __init__(self, hidden_dim: int) -> None:
+        super().__init__()
+        self.score = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, 1),
+        )
+
+    def forward(self, x: torch.Tensor, padding_mask: torch.Tensor) -> torch.Tensor:
+        if x.ndim != 3:
+            raise ValueError("Expected [batch, seq_len, hidden_dim] tensor for attention pooling.")
+        logits = self.score(x).squeeze(-1)
+        logits = logits.masked_fill(padding_mask, float("-inf"))
+        all_padded = padding_mask.all(dim=1)
+        if all_padded.any():
+            logits = logits.clone()
+            logits[all_padded] = 0.0
+        weights = torch.softmax(logits, dim=1)
+        return torch.bmm(weights.unsqueeze(1), x).squeeze(1)
 
 
 class TransformerLogClassifier(nn.Module):
-    """Transformer encoder model for HDFS system log anomaly classification."""
+    """Transformer encoder over parsed log-template ids."""
 
     def __init__(
         self,
         vocab_size: int,
         num_classes: int,
-        d_model: int = 128,
-        nhead: int = 4,
-        num_layers: int = 2,
-        dim_feedforward: int = 256,
-        dropout: float = 0.1,
+        d_model: int = 160,
+        nhead: int = 8,
+        num_layers: int = 3,
+        dim_feedforward: int = 384,
+        dropout: float = 0.15,
         max_len: int = 512,
         padding_idx: int = 0,
     ) -> None:
@@ -54,39 +77,48 @@ class TransformerLogClassifier(nn.Module):
             raise ValueError("vocab_size must be >= 2.")
         if num_classes < 2:
             raise ValueError("num_classes must be >= 2.")
+        if d_model % nhead != 0:
+            raise ValueError("d_model must be divisible by nhead.")
 
-        self.padding_idx = padding_idx
-        self.embedding = nn.Embedding(vocab_size, d_model, padding_idx=padding_idx)
+        self.padding_idx = int(padding_idx)
+        self.embedding = nn.Embedding(vocab_size, d_model, padding_idx=self.padding_idx)
         self.position = PositionalEncoding(d_model=d_model, max_len=max_len)
+        self.embedding_dropout = nn.Dropout(dropout)
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
             dim_feedforward=dim_feedforward,
             dropout=dropout,
-            batch_first=True,
             activation="gelu",
+            batch_first=True,
+            norm_first=True,
         )
-        self.encoder = nn.TransformerEncoder(encoder_layer=encoder_layer, num_layers=num_layers)
-        self.dropout = nn.Dropout(dropout)
-        self.classifier = nn.Linear(d_model, num_classes)
+        self.encoder = nn.TransformerEncoder(
+            encoder_layer=encoder_layer,
+            num_layers=num_layers,
+            enable_nested_tensor=False,
+        )
+        self.pool = AttentionPooling(d_model)
+        self.head = nn.Sequential(
+            nn.LayerNorm(d_model),
+            nn.Dropout(dropout),
+            nn.Linear(d_model, num_classes),
+        )
         self.scale = math.sqrt(d_model)
 
-    def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
+    def forward_features(self, token_ids: torch.Tensor) -> torch.Tensor:
         if token_ids.ndim != 2:
-            raise ValueError("System transformer expects input with shape [batch, seq_len].")
-
+            raise ValueError("System transformer expects [batch, seq_len] token ids.")
         token_ids = token_ids.long()
         padding_mask = token_ids.eq(self.padding_idx)
         embedded = self.embedding(token_ids) * self.scale
         embedded = self.position(embedded)
+        embedded = self.embedding_dropout(embedded)
         encoded = self.encoder(embedded, src_key_padding_mask=padding_mask)
+        return self.pool(encoded, padding_mask=padding_mask)
 
-        valid_mask = (~padding_mask).unsqueeze(-1)
-        summed = (encoded * valid_mask).sum(dim=1)
-        counts = valid_mask.sum(dim=1).clamp(min=1)
-        pooled = summed / counts
-        logits = self.classifier(self.dropout(pooled))
-        return logits
+    def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
+        return self.head(self.forward_features(token_ids))
 
 
 class SystemExpertTransformer(BaseExpert):
@@ -121,11 +153,11 @@ class SystemExpertTransformer(BaseExpert):
         self.model = TransformerLogClassifier(
             vocab_size=int(checkpoint_config.get("vocab_size", vocab_size)),
             num_classes=len(self.class_names),
-            d_model=int(checkpoint_config.get("d_model", 128)),
-            nhead=int(checkpoint_config.get("nhead", 4)),
-            num_layers=int(checkpoint_config.get("num_layers", 2)),
-            dim_feedforward=int(checkpoint_config.get("dim_feedforward", 256)),
-            dropout=float(checkpoint_config.get("dropout", 0.1)),
+            d_model=int(checkpoint_config.get("d_model", 160)),
+            nhead=int(checkpoint_config.get("nhead", 8)),
+            num_layers=int(checkpoint_config.get("num_layers", 3)),
+            dim_feedforward=int(checkpoint_config.get("dim_feedforward", 384)),
+            dropout=float(checkpoint_config.get("dropout", 0.15)),
             max_len=int(checkpoint_config.get("max_len", 512)),
             padding_idx=int(checkpoint_config.get("padding_idx", 0)),
         ).to(self.device)
@@ -174,18 +206,15 @@ class SystemExpertTransformer(BaseExpert):
     def _load_weights(self, model_path: Path) -> None:
         if not model_path.exists():
             return
-        checkpoint = torch.load(model_path, map_location=self.device)
-        if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-            state_dict = checkpoint["state_dict"]
-        else:
-            state_dict = checkpoint
+        checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+        state_dict = checkpoint["state_dict"] if isinstance(checkpoint, dict) and "state_dict" in checkpoint else checkpoint
         self.model.load_state_dict(state_dict, strict=False)
 
     def _peek_checkpoint(self, model_path: Path) -> tuple[dict[str, Any], tuple[str, ...]]:
         if not model_path.exists():
             return {}, ()
 
-        checkpoint = torch.load(model_path, map_location="cpu")
+        checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
         if not isinstance(checkpoint, dict):
             return {}, ()
 
@@ -227,3 +256,6 @@ class SystemExpertTransformer(BaseExpert):
                 "Pass matching class names or use a compatible checkpoint."
             )
         return tuple(f"class_{idx}" for idx in range(inferred_num_classes))
+
+
+__all__ = ["TransformerLogClassifier", "SystemExpertTransformer"]
