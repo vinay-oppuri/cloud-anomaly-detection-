@@ -1,0 +1,22 @@
+Apr 30 09:14:58 edge-fw notice baseline collector synced for vlan=prod-a
+Apr 30 09:14:59 edge-fw notice packet capture rotation completed target=segment-7
+[2026-04-30T09:15:00Z] ALERT src=45.77.12.10 dst=10.10.2.40 duration=95 fwdpkts=5100 bwdpkts=0 fwdbytes=118000 bwdbytes=0 bytesps=2950000 pktsps=26200 syn=15 ack=0 rst=4 psh=0
+[2026-04-30T09:15:01Z] ALERT src=45.77.12.11 dst=10.10.2.40 duration=88 fwdpkts=5300 bwdpkts=0 fwdbytes=124000 bwdbytes=0 bytesps=3050000 pktsps=27600 syn=16 ack=0 rst=5 psh=0
+[2026-04-30T09:15:02Z] ALERT src=45.77.12.12 dst=10.10.2.40 duration=102 fwdpkts=4950 bwdpkts=0 fwdbytes=113000 bwdbytes=0 bytesps=2810000 pktsps=24800 syn=14 ack=0 rst=4 psh=0
+[2026-04-30T09:15:03Z] ALERT src=45.77.12.13 dst=10.10.2.40 duration=90 fwdpkts=5450 bwdpkts=0 fwdbytes=128000 bwdbytes=0 bytesps=3180000 pktsps=28500 syn=17 ack=0 rst=5 psh=0
+[2026-04-30T09:15:04Z] ALERT src=45.77.12.14 dst=10.10.2.40 duration=110 fwdpkts=4800 bwdpkts=0 fwdbytes=109000 bwdbytes=0 bytesps=2690000 pktsps=23600 syn=14 ack=0 rst=4 psh=0
+[2026-04-30T09:15:05Z] ALERT src=45.77.12.15 dst=10.10.2.40 duration=86 fwdpkts=5600 bwdpkts=0 fwdbytes=132000 bwdbytes=0 bytesps=3250000 pktsps=29200 syn=18 ack=0 rst=6 psh=0
+[2026-04-30T09:15:06Z] ALERT src=45.77.12.16 dst=10.10.2.40 duration=98 fwdpkts=5050 bwdpkts=0 fwdbytes=116000 bwdbytes=0 bytesps=2890000 pktsps=25500 syn=15 ack=0 rst=4 psh=0
+[2026-04-30T09:15:07Z] ALERT src=45.77.12.17 dst=10.10.2.40 duration=92 fwdpkts=5250 bwdpkts=0 fwdbytes=122000 bwdbytes=0 bytesps=3010000 pktsps=27000 syn=16 ack=0 rst=5 psh=0
+[2026-04-30T09:15:08Z] ALERT src=45.77.12.18 dst=10.10.2.40 duration=104 fwdpkts=4900 bwdpkts=0 fwdbytes=112000 bwdbytes=0 bytesps=2780000 pktsps=24300 syn=14 ack=0 rst=4 psh=0
+[2026-04-30T09:15:09Z] ALERT src=45.77.12.19 dst=10.10.2.40 duration=89 fwdpkts=5500 bwdpkts=0 fwdbytes=129000 bwdbytes=0 bytesps=3200000 pktsps=28700 syn=17 ack=0 rst=5 psh=0
+[2026-04-30T09:15:10Z] ALERT src=45.77.12.20 dst=10.10.2.40 duration=97 fwdpkts=5000 bwdpkts=0 fwdbytes=115000 bwdbytes=0 bytesps=2860000 pktsps=25200 syn=15 ack=0 rst=4 psh=0
+[2026-04-30T09:15:11Z] ALERT src=45.77.12.21 dst=10.10.2.40 duration=91 fwdpkts=5350 bwdpkts=0 fwdbytes=125000 bwdbytes=0 bytesps=3090000 pktsps=27900 syn=16 ack=0 rst=5 psh=0
+[2026-04-30T09:15:12Z] ALERT src=45.77.12.22 dst=10.10.2.40 duration=95 fwdpkts=5100 bwdpkts=0 fwdbytes=118000 bwdbytes=0 bytesps=2950000 pktsps=26200 syn=15 ack=0 rst=4 psh=0
+[2026-04-30T09:15:13Z] ALERT src=45.77.12.23 dst=10.10.2.40 duration=88 fwdpkts=5300 bwdpkts=0 fwdbytes=124000 bwdbytes=0 bytesps=3050000 pktsps=27600 syn=16 ack=0 rst=5 psh=0
+[2026-04-30T09:15:14Z] ALERT src=45.77.12.24 dst=10.10.2.40 duration=102 fwdpkts=4950 bwdpkts=0 fwdbytes=113000 bwdbytes=0 bytesps=2810000 pktsps=24800 syn=14 ack=0 rst=4 psh=0
+[2026-04-30T09:15:15Z] ALERT src=45.77.12.25 dst=10.10.2.40 duration=90 fwdpkts=5450 bwdpkts=0 fwdbytes=128000 bwdbytes=0 bytesps=3180000 pktsps=28500 syn=17 ack=0 rst=5 psh=0
+[2026-04-30T09:15:16Z] ALERT src=45.77.12.26 dst=10.10.2.40 duration=110 fwdpkts=4800 bwdpkts=0 fwdbytes=109000 bwdbytes=0 bytesps=2690000 pktsps=23600 syn=14 ack=0 rst=4 psh=0
+[2026-04-30T09:15:17Z] ALERT src=45.77.12.27 dst=10.10.2.40 duration=86 fwdpkts=5600 bwdpkts=0 fwdbytes=132000 bwdbytes=0 bytesps=3250000 pktsps=29200 syn=18 ack=0 rst=6 psh=0
+Apr 30 09:15:18 edge-fw info mitigation queue armed for anomaly session alpha-145
+Apr 30 09:15:19 edge-fw info export flush completed for anomaly session alpha-145

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -11,12 +12,27 @@ PASS = "[PASS]"
 FAIL = "[FAIL]"
 INFO = "[INFO]"
 SEPARATOR = "=" * 60
+ENTRYPOINT_MODULES = {
+    "test_cicids": "src.experts.network_expert.test",
+    "test_hdfs": "src.experts.system_expert.test",
+}
 
 
 @dataclass(slots=True)
 class CheckResult:
     name: str
     status: str
+
+
+def _build_command(entrypoint: str, *args: str) -> tuple[str, ...]:
+    executable = shutil.which(entrypoint)
+    if executable is not None:
+        return (executable, *args)
+
+    module_name = ENTRYPOINT_MODULES.get(entrypoint)
+    if module_name is None:
+        return (entrypoint, *args)
+    return (sys.executable, "-m", module_name, *args)
 
 
 def _run_json_command(*command: str) -> dict[str, Any]:
@@ -51,7 +67,7 @@ def main() -> None:
     print(f"\n{SEPARATOR}")
     print("  1. NETWORK EXPERT - CICIDS2018 Test Split")
     print(SEPARATOR)
-    network_eval = _run_json_command("uv", "run", "test_cicids")
+    network_eval = _run_json_command(*_build_command("test_cicids"))
     network_metrics = network_eval["metrics"]
     print(f"  Threshold : {network_eval['threshold']:.4f} (source: {network_eval['threshold_source']})")
     print(f"  Sequences : {network_eval['num_sequences']:,}")
@@ -71,7 +87,9 @@ def main() -> None:
     print(f"\n{SEPARATOR}")
     print("  2. NETWORK EXPERT - Real-world Normal Syslog")
     print(SEPARATOR)
-    network_normal = _run_json_command("uv", "run", "test_cicids", "--log-file", "data/real_normal_syslog.log")
+    network_normal = _run_json_command(
+        *_build_command("test_cicids", "--log-file", "data/real_normal_syslog.log")
+    )
     normal_label = str(network_normal["decision_label"])
     normal_score = float(network_normal["summary"]["max_anomaly_score"])
     normal_windows = int(network_normal["summary"]["anomaly_windows"])
@@ -86,7 +104,9 @@ def main() -> None:
     print(f"\n{SEPARATOR}")
     print("  3. NETWORK EXPERT - Real-world Anomaly Syslog")
     print(SEPARATOR)
-    network_anomaly = _run_json_command("uv", "run", "test_cicids", "--log-file", "data/real_anomaly_syslog.log")
+    network_anomaly = _run_json_command(
+        *_build_command("test_cicids", "--log-file", "data/real_anomaly_syslog.log")
+    )
     anomaly_label = str(network_anomaly["decision_label"])
     anomaly_score = float(network_anomaly["summary"]["max_anomaly_score"])
     print(f"  Decision  : {anomaly_label}")
@@ -100,7 +120,7 @@ def main() -> None:
     print("  4. SYSTEM EXPERT - HDFS Test Split")
     print(SEPARATOR)
     try:
-        system_eval = _run_json_command("uv", "run", "test_hdfs")
+        system_eval = _run_json_command(*_build_command("test_hdfs"))
         system_metrics = system_eval.get("metrics", {})
         if system_metrics:
             print(f"  Split : {system_eval.get('split', 'test')}")

@@ -1,0 +1,37 @@
+2026-04-30 09:15:03,110 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* allocate blk_202604300915001 for /warehouse/daily/part-0001
+2026-04-30 09:15:03,441 INFO org.apache.hadoop.hdfs.server.datanode.DataNode: Receiving block BP-114523:blk_202604300915001 src=/10.20.14.22:50010 dest=/10.20.14.31:9866
+2026-04-30 09:15:03,772 INFO org.apache.hadoop.hdfs.server.datanode.DataXceiver: writeBlock blk_202604300915001 from /10.20.14.22:50010
+2026-04-30 09:15:04,113 INFO org.apache.hadoop.hdfs.server.datanode.PacketResponder: PacketResponder 0 for block blk_202604300915001 success
+2026-04-30 09:15:04,448 INFO org.apache.hadoop.hdfs.server.datanode.fsdataset.impl.FsDatasetImpl: Finalized block blk_202604300915001
+2026-04-30 09:15:04,786 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* addStoredBlock blk_202604300915001 to DatanodeDescriptor[10.20.14.31:9866]
+2026-04-30 09:15:05,120 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: completeFile /warehouse/daily/part-0001
+2026-04-30 09:15:17,204 WARN org.apache.hadoop.hdfs.server.datanode.DataNode: Slow BlockReceiver write data to disk cost: 4128 ms for blk_202604300915145
+2026-04-30 09:15:17,517 WARN org.apache.hadoop.hdfs.server.datanode.BlockReceiver: checksum mismatch while writing blk_202604300915145 in pipeline
+2026-04-30 09:15:17,861 ERROR org.apache.hadoop.hdfs.server.datanode.DataStreamer: failed to write packet for block blk_202604300915145 to datanode /10.20.14.44:9866
+2026-04-30 09:15:18,140 ERROR org.apache.hadoop.hdfs.server.datanode.DataStreamer: java.io.IOException: Broken pipe while sending blk_202604300915145
+2026-04-30 09:15:18,486 WARN org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* invalidateBlocks blk_202604300915145 due to corrupt replica on 10.20.14.44:9866
+2026-04-30 09:15:18,812 WARN org.apache.hadoop.hdfs.server.namenode.BlockManager: marking corrupt replica for blk_202604300915145 at storage DS-93a2
+2026-04-30 09:15:19,168 WARN org.apache.hadoop.hdfs.server.namenode.BlockManager: missing 2 replicas for blk_202604300915145
+2026-04-30 09:15:19,492 INFO org.apache.hadoop.hdfs.server.namenode.BlockManager: replicate blk_202604300915145 to 10.20.14.51:9866
+2026-04-30 09:15:19,846 INFO org.apache.hadoop.hdfs.server.namenode.BlockManager: replicate blk_202604300915145 to 10.20.14.52:9866
+2026-04-30 09:15:20,193 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* allocate blk_202604300915145 for /warehouse/daily/recovery-part-0145
+2026-04-30 09:15:20,524 INFO org.apache.hadoop.hdfs.server.datanode.DataNode: Receiving block BP-114523:blk_202604300915145 src=/10.20.14.31:50010 dest=/10.20.14.51:9866
+2026-04-30 09:15:20,858 INFO org.apache.hadoop.hdfs.server.datanode.DataXceiver: writeBlock blk_202604300915145 from /10.20.14.31:50010
+2026-04-30 09:15:21,181 INFO org.apache.hadoop.hdfs.server.datanode.PacketResponder: PacketResponder 0 for block blk_202604300915145 success
+2026-04-30 09:15:21,507 INFO org.apache.hadoop.hdfs.server.datanode.fsdataset.impl.FsDatasetImpl: Finalized block blk_202604300915145
+2026-04-30 09:15:21,842 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* addStoredBlock blk_202604300915145 to DatanodeDescriptor[10.20.14.51:9866]
+2026-04-30 09:15:22,174 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: completeFile /warehouse/daily/recovery-part-0145
+2026-04-30 09:15:23,020 INFO org.apache.hadoop.hdfs.server.datanode.DataNode: Slow BlockReceiver write data to disk cost: 3964 ms for blk_202604300915146
+2026-04-30 09:15:23,351 WARN org.apache.hadoop.hdfs.server.datanode.BlockReceiver: checksum mismatch while writing blk_202604300915146 in pipeline
+2026-04-30 09:15:23,679 ERROR org.apache.hadoop.hdfs.server.datanode.DataStreamer: failed to write packet for block blk_202604300915146 to datanode /10.20.14.45:9866
+2026-04-30 09:15:24,001 ERROR org.apache.hadoop.hdfs.server.datanode.DataStreamer: java.io.IOException: Broken pipe while sending blk_202604300915146
+2026-04-30 09:15:24,346 WARN org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* invalidateBlocks blk_202604300915146 due to corrupt replica on 10.20.14.45:9866
+2026-04-30 09:15:24,677 WARN org.apache.hadoop.hdfs.server.namenode.BlockManager: missing 2 replicas for blk_202604300915146
+2026-04-30 09:15:25,009 INFO org.apache.hadoop.hdfs.server.namenode.BlockManager: replicate blk_202604300915146 to 10.20.14.61:9866
+2026-04-30 09:15:25,342 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* allocate blk_202604300915146 for /warehouse/daily/recovery-part-0146
+2026-04-30 09:15:25,681 INFO org.apache.hadoop.hdfs.server.datanode.DataNode: Receiving block BP-114523:blk_202604300915146 src=/10.20.14.31:50010 dest=/10.20.14.61:9866
+2026-04-30 09:15:26,009 INFO org.apache.hadoop.hdfs.server.datanode.DataXceiver: writeBlock blk_202604300915146 from /10.20.14.31:50010
+2026-04-30 09:15:26,344 INFO org.apache.hadoop.hdfs.server.datanode.PacketResponder: PacketResponder 0 for block blk_202604300915146 success
+2026-04-30 09:15:26,675 INFO org.apache.hadoop.hdfs.server.datanode.fsdataset.impl.FsDatasetImpl: Finalized block blk_202604300915146
+2026-04-30 09:15:27,002 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: BLOCK* addStoredBlock blk_202604300915146 to DatanodeDescriptor[10.20.14.61:9866]
+2026-04-30 09:15:27,339 INFO org.apache.hadoop.hdfs.server.namenode.FSNamesystem: completeFile /warehouse/daily/recovery-part-0146
